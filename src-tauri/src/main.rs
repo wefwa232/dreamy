@@ -1,7 +1,8 @@
 // Prevents an extra console window from opening on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 
 use tauri::menu::{Menu, MenuItem};
@@ -30,25 +31,55 @@ fn load_tags() -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
-/// Save the whole tag library as JSON.
+/// Save the whole tag library as JSON. Written to a temporary file first and then
+/// renamed over tags.json, so a crash mid-write cannot leave a half-written library.
 #[tauri::command]
 fn save_tags(content: String) -> Result<(), String> {
     let root = dreamy_root()?;
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    fs::write(root.join("tags.json"), content).map_err(|e| e.to_string())
+    let temp = root.join("tags.json.tmp");
+    fs::write(&temp, content).map_err(|e| e.to_string())?;
+    fs::rename(&temp, root.join("tags.json")).map_err(|e| e.to_string())
 }
 
-/// Save one dream as a Markdown file. Returns the full path it was saved to.
+/// Save one dream as a Markdown file. An existing dream is never overwritten:
+/// if the name is taken, "_2", "_3" and so on are added. Returns the file name
+/// it was actually saved under.
 #[tauri::command]
 fn save_dream(filename: String, content: String) -> Result<String, String> {
-    if filename.is_empty() || filename.contains(['/', '\\']) {
-        return Err("Invalid file name".to_string());
-    }
+    let stem = filename
+        .strip_suffix(".md")
+        .filter(|stem| !stem.is_empty() && !stem.contains(['/', '\\']))
+        .ok_or_else(|| "Invalid file name".to_string())?;
     let dir = dreams_dir()?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&filename);
-    fs::write(&path, content).map_err(|e| e.to_string())?;
-    Ok(path.display().to_string())
+
+    for n in 1..=999 {
+        let name = if n == 1 {
+            format!("{stem}.md")
+        } else {
+            format!("{stem}_{n}.md")
+        };
+        let path = dir.join(&name);
+        // create_new fails if the file already exists, so nothing is replaced
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let written = file
+                    .write_all(content.as_bytes())
+                    .and_then(|()| file.sync_all());
+                if let Err(e) = written {
+                    // Do not leave a half-written dream behind
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(e.to_string());
+                }
+                return Ok(name);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("Too many dreams share this minute".to_string())
 }
 
 /// List saved dream file names, newest first.
@@ -151,4 +182,49 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Dreamy");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs every check in one test, because USERPROFILE is process-wide and
+    /// the checks must not race each other. Uses a scratch folder, never the
+    /// owner's real Documents\Dreamy.
+    #[test]
+    fn saving_never_overwrites_and_tags_are_atomic() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!("dreamy-test-{nanos}"));
+        std::env::set_var("USERPROFILE", &scratch);
+
+        let stamp = "2026-10-13_07-12.md";
+        assert_eq!(save_dream(stamp.into(), "first".into()).unwrap(), stamp);
+        assert_eq!(
+            save_dream(stamp.into(), "second".into()).unwrap(),
+            "2026-10-13_07-12_2.md"
+        );
+        assert_eq!(
+            save_dream(stamp.into(), "third".into()).unwrap(),
+            "2026-10-13_07-12_3.md"
+        );
+
+        let dir = dreams_dir().unwrap();
+        assert_eq!(fs::read_to_string(dir.join(stamp)).unwrap(), "first");
+        assert_eq!(fs::read_to_string(dir.join("2026-10-13_07-12_2.md")).unwrap(), "second");
+        assert_eq!(fs::read_to_string(dir.join("2026-10-13_07-12_3.md")).unwrap(), "third");
+
+        for bad in ["../escape.md", r"a\b.md", "notes.txt", ".md", ""] {
+            assert!(save_dream(bad.into(), "x".into()).is_err(), "accepted {bad:?}");
+        }
+
+        save_tags("[1]".into()).unwrap();
+        save_tags("[2]".into()).unwrap();
+        assert_eq!(load_tags().unwrap(), "[2]");
+        assert!(!dreamy_root().unwrap().join("tags.json.tmp").exists());
+
+        let _ = fs::remove_dir_all(&scratch);
+    }
 }

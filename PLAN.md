@@ -29,6 +29,7 @@ A personal Windows desktop app for journaling dreams and lucid dreams. Built for
 - [x] Tag system: pills, designer (colour and symbol), library chips, saved to `tags.json`.
 - [x] Open and view past entries: click a recent dream (or "Show all") to read it in a reader sheet with its date, lucidity, and tags.
 - [x] Dreams sidebar: slides out when the pointer reaches the left edge. The Dreams tab opens a journal with search (words, tags, dates), sort, lucidity filter, and tag filter.
+- [x] Data safety: a save never overwrites an existing dream (a "_2" or "_3" is added when two share a minute), and dreams and the tag library are written to a temporary file first so a crash can't leave a half-written entry. Covered by a Rust test that uses a scratch folder.
 - [ ] **Verify in the real desktop window.** The latest build was checked in a browser preview and `cargo check` passes, but `cargo build` was blocked because the running dev copy holds `dreamy.exe`. Close Dreamy first, then `npm run dev`.
 - [ ] Reality-check reminders (interval notifications from the tray)
 - [ ] Wake-back-to-bed timer

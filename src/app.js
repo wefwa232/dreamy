@@ -10,7 +10,13 @@
   const invoke = window.__TAURI__
     ? window.__TAURI__.core.invoke
     : async (cmd, args = {}) => {
-        if (cmd === "save_dream") { preview.dreams[args.filename] = args.content; return args.filename; }
+        if (cmd === "save_dream") {
+          const stem = args.filename.replace(/\.md$/, "");
+          let name = args.filename;
+          for (let n = 2; name in preview.dreams; n++) name = stem + "_" + n + ".md";
+          preview.dreams[name] = args.content;
+          return name;
+        }
         if (cmd === "list_dreams") return Object.keys(preview.dreams).sort().reverse();
         if (cmd === "read_dreams") return Object.keys(preview.dreams).sort().reverse().map((name) => [name, preview.dreams[name]]);
         if (cmd === "read_dream") {
@@ -216,7 +222,7 @@
   }
 
   function prettyName(name) {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})\.md$/);
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_\d+)?\.md$/);
     if (!m) return name;
     const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
     return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -611,8 +617,8 @@
     const filename = fileStamp(dreamTime.value) + ".md";
 
     try {
-      await invoke("save_dream", { filename, content: header + text + "\n" });
-      setStatus("Saved " + prettyName(filename), "ok");
+      const saved = await invoke("save_dream", { filename, content: header + text + "\n" });
+      setStatus("Saved " + prettyName(saved), "ok");
       burst(saveBtn, 16);
       dreamEl.value = "";
       state.selected = [];
@@ -807,7 +813,7 @@
 
   // A dream's date spelled out in full, so "october" or "monday" can be searched
   function dateWords(name) {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})\.md$/);
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_\d+)?\.md$/);
     if (!m) return name;
     const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
     return d.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" });
