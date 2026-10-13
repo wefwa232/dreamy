@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dreamy</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div id="aura" aria-hidden="true"></div>
+
+  <main class="app">
+    <header class="header">
+      <button class="gear" id="settingsBtn" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+        </svg>
+      </button>
+      <div class="brand">
+        <svg class="moon" viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="moonGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" style="stop-color:#e4dcff" />
+              <stop offset="1" style="stop-color:var(--accent)" />
+            </linearGradient>
+          </defs>
+          <path fill="url(#moonGrad)" d="M40 6a26 26 0 1 0 18 40A22 22 0 0 1 40 6z" />
+        </svg>
+        <div>
+          <h1 class="title">Dreamy</h1>
+          <p class="tagline">Capture the dream before it fades.</p>
+        </div>
+      </div>
+      <div class="today" id="today"></div>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <div>
+          <label class="label" for="dreamTime">Woke up at</label>
+          <input id="dreamTime" type="datetime-local" />
+        </div>
+        <div>
+          <span class="label" id="lucidLabel">Lucidity</span>
+          <div class="orbs" id="orbs" role="radiogroup" aria-labelledby="lucidLabel"></div>
+          <div class="caption" id="caption"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <span class="label" id="tagLabel">Tags</span>
+        <div class="tagfield" id="tagfield">
+          <div class="pills" id="pills" style="display:contents"></div>
+          <input id="tagInput" type="text" placeholder="Type a tag and press Enter" aria-labelledby="tagLabel" autocomplete="off" />
+          <button class="designer-btn" id="designBtn" type="button" aria-label="Design a tag" title="Design a tag: colour and symbol">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+              <circle cx="12" cy="12" r="2.6" />
+            </svg>
+          </button>
+
+          <div class="designer" id="designer" role="dialog" aria-label="Tag designer">
+            <div class="designer-head">
+              <h2 id="designerTitle">New tag</h2>
+              <span class="designer-preview" id="designerPreview"></span>
+            </div>
+            <input class="designer-name" id="designerName" type="text" maxlength="24" placeholder="Name your tag" autocomplete="off" />
+
+            <span class="label">Colour</span>
+            <div class="swatches" id="swatches" role="radiogroup" aria-label="Colour"></div>
+
+            <span class="label">Symbol</span>
+            <div class="symbols" id="symbols" role="radiogroup" aria-label="Symbol"></div>
+
+            <div class="designer-actions">
+              <span class="designer-error" id="designerError"></span>
+              <button class="btn ghost" id="designerCancel" type="button">Cancel</button>
+              <button class="btn" id="designerSave" type="button">Create tag</button>
+            </div>
+          </div>
+        </div>
+        <div class="library" id="library"></div>
+      </div>
+
+      <div class="section">
+        <label class="label" for="dream">The dream</label>
+        <textarea id="dream" class="dream" placeholder="What do you remember..."></textarea>
+      </div>
+
+      <div class="footer">
+        <div class="hint">
+          <kbd>Ctrl</kbd> + <kbd>Enter</kbd> save &nbsp;·&nbsp; <kbd>Ctrl</kbd> + <kbd>Space</kbd> speak with Handy<br />
+          <kbd>Enter</kbd> adds a tag &nbsp;·&nbsp; <kbd>Backspace</kbd> removes the last one
+        </div>
+        <div class="footer-right">
+          <span class="status" id="status" role="status"></span>
+          <button class="btn" id="saveBtn" type="button">Save dream</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="recent">
+      <div class="recent-head">
+        <h2>Recent dreams</h2>
+        <span class="count" id="count"></span>
+      </div>
+      <div class="entries" id="entries"></div>
+    </section>
+  </main>
+
+  <aside class="sidebar" id="sidebar" aria-hidden="true">
+    <nav class="rail" aria-label="Sidebar">
+      <button class="tab" id="tabDreams" type="button" aria-expanded="false" aria-controls="journal" title="Dreams">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
+        </svg>
+        <span>Dreams</span>
+      </button>
+    </nav>
+
+    <section class="journal" id="journal" aria-label="Dreams" inert>
+      <div class="journal-inner">
+        <div class="journal-head">
+          <h2>Dreams</h2>
+          <span class="count" id="sideCount"></span>
+          <button class="close" id="closeSidebar" type="button" aria-label="Close sidebar">×</button>
+        </div>
+
+        <input class="journal-search" id="sideSearch" type="search" placeholder="Search words, tags or dates" autocomplete="off" />
+
+        <div class="journal-tools">
+          <select class="journal-sort" id="sideSort" aria-label="Sort dreams">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="lucid">Most lucid first</option>
+            <option value="calm">Least lucid first</option>
+          </select>
+          <button class="more" id="sideClear" type="button" hidden>Clear filters</button>
+        </div>
+
+        <span class="label journal-label" id="levelLabel">Lucidity</span>
+        <div class="level-seg" id="sideLucid" role="radiogroup" aria-labelledby="levelLabel"></div>
+
+        <span class="label journal-label" id="sideTagLabel">Tags · dreams must have all picked</span>
+        <div class="side-tag-filter" id="sideTags" aria-labelledby="sideTagLabel"></div>
+
+        <div class="side-list" id="sideList"></div>
+      </div>
+    </section>
+  </aside>
+  <div class="edge" id="edge" aria-hidden="true"></div>
+
+  <aside class="reader" id="reader" aria-hidden="true">
+    <div class="reader-scrim" id="readerScrim"></div>
+    <article class="sheet" role="dialog" aria-modal="true" aria-labelledby="readerTitle">
+      <div class="sheet-head">
+        <h2 id="readerTitle"></h2>
+        <button class="close" id="closeReader" type="button" aria-label="Close this dream">×</button>
+      </div>
+      <div class="reader-meta">
+        <span class="reader-lucid" id="readerLucid"></span>
+        <div class="reader-tags" id="readerTags"></div>
+      </div>
+      <div class="reader-text" id="readerText"></div>
+      <p class="reader-file" id="readerFile"></p>
+    </article>
+  </aside>
+
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="scrim" id="scrim"></div>
+    <div class="panel" role="dialog" aria-label="Settings">
+      <div class="panel-head">
+        <h2>Settings</h2>
+        <button class="close" id="closeSettings" aria-label="Close settings">×</button>
+      </div>
+
+      <span class="label">Visual world</span>
+      <div class="themes" id="themes" role="radiogroup" aria-label="Visual world"></div>
+
+      <div class="toggle-row">
+        <div>
+          <strong>Ambient motion</strong>
+          <span>Starfield, drifting light and the cursor glow</span>
+        </div>
+        <button class="switch" id="motionSwitch" role="switch" aria-checked="true" aria-label="Ambient motion"></button>
+      </div>
+
+      <p class="panel-foot">Your choices are remembered on this PC. Dreams are stored in Documents\Dreamy.</p>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

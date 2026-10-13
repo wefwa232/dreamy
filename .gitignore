@@ -1,0 +1,22 @@
+# Installed packages (recreated by "npm install")
+node_modules/
+
+# Rust build output (can be several GB; recreated by building)
+src-tauri/target/
+
+# Tauri generated schema files (recreated by building)
+src-tauri/gen/
+
+# Build output for installers
+dist/
+
+# Editor and system junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and local settings
+*.log
+.claude/settings.local.json
