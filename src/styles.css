@@ -476,7 +476,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   justify-content: space-between;
   margin-bottom: 14px;
 }
-.designer-head h3 {
+.designer-head h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;

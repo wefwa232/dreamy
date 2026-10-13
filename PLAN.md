@@ -30,6 +30,11 @@ A personal Windows desktop app for journaling dreams and lucid dreams. Built for
 - [x] Open and view past entries: click a recent dream (or "Show all") to read it in a reader sheet with its date, lucidity, and tags.
 - [x] Dreams sidebar: slides out when the pointer reaches the left edge. The Dreams tab opens a journal with search (words, tags, dates), sort, lucidity filter, and tag filter.
 - [x] Data safety: a save never overwrites an existing dream (a "_2" or "_3" is added when two share a minute), and dreams and the tag library are written to a temporary file first so a crash can't leave a half-written entry. Covered by a Rust test that uses a scratch folder.
+- [x] Second safety pass: a dream is refused unless its date is valid (an empty date no longer produces a bad filename). Dream files that can't be read are named in a status message instead of vanishing. A `tags.json` that can't be read is never overwritten: tag changes are refused until it is fixed. Saving is blocked while a save is running.
+- [x] Atomic saves: dreams and the tag library are written to a temporary file, flushed to disk, and then moved into place. A new dream still never replaces an existing one. Covered by Rust tests that simulate a failed write.
+- [x] Tag designer title: the CSS now targets the `h2` the markup uses, so the 14px title is applied.
+- [ ] **Dreams folder move (planned, not built).** The app writes to `C:\Users\User\Documents\Dreamy`, but Windows reports Documents as `G:\User\Documents`. The safe copy-first plan is in [docs/dreams-folder-migration.md](docs/dreams-folder-migration.md). Nothing moves until the owner decides.
+- [ ] Also open: Content Security Policy, startup always re-enabled, and the Dreams sidebar only opening on hover.
 - [ ] **Verify in the real desktop window.** The latest build was checked in a browser preview and `cargo check` passes, but `cargo build` was blocked because the running dev copy holds `dreamy.exe`. Close Dreamy first, then `npm run dev`.
 - [ ] Reality-check reminders (interval notifications from the tray)
 - [ ] Wake-back-to-bed timer
