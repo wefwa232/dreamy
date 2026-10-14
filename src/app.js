@@ -1827,12 +1827,23 @@
     }
   }
 
+  let updatesWatched = false;
+
   async function watchUpdates() {
-    // Plain browser preview: there is no backend, so there is nothing to show
-    if (!window.__TAURI__) return;
+    // Plain browser preview: there is no backend, so there is nothing to show.
+    // Starting twice would add a second listener, so only the first call counts.
+    if (!window.__TAURI__ || updatesWatched) return;
+    updatesWatched = true;
     try {
-      renderUpdateStatus(await invoke("get_update_status"));
-      await window.__TAURI__.event.listen("update-status", (event) => renderUpdateStatus(event.payload));
+      // Listen first, so nothing sent between the two calls is missed. The stored
+      // status is drawn only if no event has arrived yet, so it never overwrites a newer one.
+      let heardEvent = false;
+      await window.__TAURI__.event.listen("update-status", (event) => {
+        heardEvent = true;
+        renderUpdateStatus(event.payload);
+      });
+      const status = await invoke("get_update_status");
+      if (!heardEvent) renderUpdateStatus(status);
     } catch (err) {
       // Updates are a bonus: if they cannot be watched, the journal carries on
     }
@@ -1868,6 +1879,7 @@
     setLevel(0);
     setNow();
     renderPills();
+    watchUpdates();
 
     await loadLibrary();
     renderLibrary();
