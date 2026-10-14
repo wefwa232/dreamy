@@ -416,6 +416,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates::UpdateState::default())
         .manage(drafts::Unsaved::default())
+        .manage(drafts::Recovery::default())
         .invoke_handler(tauri::generate_handler![
             save_dream,
             list_dreams,
@@ -429,8 +430,11 @@ fn main() {
             drafts::load_draft,
             drafts::clear_draft,
             drafts::set_unsaved_changes,
+            drafts::preserve_draft,
+            drafts::take_draft_recovery,
             updates::get_update_status,
-            updates::dismiss_update_status
+            updates::dismiss_update_status,
+            updates::approve_update_install
         ])
         .setup(|app| {
             // Start with Windows (re-enabled on every launch so it stays on)
@@ -465,7 +469,7 @@ fn main() {
                 .build(app)?;
 
             // Words left from before a restart already hold an update, before the window has opened
-            if let Err(err) = drafts::restore_unsaved_state(&app.state::<drafts::Unsaved>()) {
+            if let Err(err) = drafts::restore_unsaved_state(&app.state::<drafts::Unsaved>(), &app.state::<drafts::Recovery>()) {
                 eprintln!("Could not read unsaved words: {err}");
             }
 

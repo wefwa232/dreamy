@@ -15,6 +15,13 @@ parts must be kept safe for good.
   "Update ready. It will install once your unsaved words are saved." Save the dream
   or clear the card, and the update installs. Words on the card or in an edit are
   also kept on disk, so a restart brings them back.
+- The install is approved only after the words are settled. Dreamy checks the card and the
+  editor once every pending save has been written, then holds them shut for the moment the
+  installer starts. Typing that begins after the download finishes is saved, and the update
+  waits for it.
+- If a kept copy of unsaved words is damaged, or belongs to a dream that no longer exists,
+  Dreamy does not drop it. It moves the copy to `Documents\Dreamy` under a name such as
+  `draft-capture.recovered-….json` and says so on the card. Nothing is deleted.
 - If the PC is offline, GitHub is unavailable, or the download fails, Dreamy still
   opens normally. A small note says the update could not be completed, and it tries
   again the next time you open Dreamy.

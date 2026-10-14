@@ -636,7 +636,7 @@
   let saving = false; // one save at a time, even for rapid clicks or Ctrl+Enter
 
   async function saveDream() {
-    if (saving) return;
+    if (saving || installHold) return;
     if (tagInput.value.trim()) {
       selectTag(tagInput.value);
       tagInput.value = "";
@@ -684,6 +684,7 @@
     } finally {
       saving = false;
       saveBtn.disabled = false;
+      requestInstallApproval(); // a waiting update may now be released
     }
   }
 
@@ -1374,6 +1375,7 @@
   // `draft` (optional) is unsaved words restored after a restart. They are shown over
   // the saved dream, and `original` stays the saved version, so the editor still counts them as unsaved.
   function openEditor(name, focus, draft) {
+    if (installHold) return; // an install is being approved: nothing new opens
     const dream = state.journal.find((d) => d.name === name);
     if (!dream) {
       setSideNote("That dream could not be found.", "error");
@@ -1424,7 +1426,7 @@
   }
 
   async function saveEditor() {
-    if (!editing || editing.saving) return;
+    if (!editing || editing.saving || installHold) return;
     // A tag typed but not yet entered is added, as it is for a new dream
     if (editTagInput.value.trim()) {
       addEditTag(editTagInput.value);
@@ -1475,6 +1477,7 @@
     } finally {
       if (editing) editing.saving = false;
       editSave.disabled = false;
+      requestInstallApproval(); // a waiting update may now be released
     }
   }
 
@@ -1825,6 +1828,9 @@
 
   function renderUpdateStatus(status) {
     const state = status && status.state;
+    // Only a waiting update has a token to approve. Any other state means there is none to approve.
+    updateToken = state === "waiting" ? status.token : null;
+    if (updateToken !== null) requestInstallApproval();
     const failed = state === "failed";
     const working = state === "downloading" || state === "waiting" || state === "installing";
     updateNote.hidden = !(failed || working);
@@ -1880,8 +1886,9 @@
      them. The copy is removed after a save or a discard. While words are unsaved
      the window reports it, and an update waits before it restarts Dreamy.
      ========================================================================== */
-  // busy starts unknown (null), so the first sync always tells Rust what the window holds
-  const lastDraft = { capture: null, editor: null, busy: null };
+  // Nothing is known to be stored yet (undefined, not null, which means "no draft"), so
+  // the first sync after startup always brings the stored copies in step with the screen
+  const lastDraft = { capture: undefined, editor: undefined, busy: undefined };
   let draftsReady = false; // nothing is written until the saved copies have been read
   let draftQueue = Promise.resolve(); // writes run one at a time, so the newest always lands last
 
@@ -1942,6 +1949,7 @@
       lastDraft.busy = busy;
       queueDraft("set_unsaved_changes", { busy }, "capture");
     }
+    requestInstallApproval(); // words may have just cleared, which can release a waiting update
   }
 
   // Every change on screen passes through one of these events, so the copies follow along
@@ -1958,13 +1966,30 @@
     setStatus("Restored your unsaved dream from before the restart.", "ok");
   }
 
-  // Reads one stored copy. A copy that cannot be read is ignored, not shown.
+  // Tells the owner where unsaved words went when they could not be restored. Nothing is deleted.
+  function reportRecovered(names) {
+    if (names.length === 0) return;
+    setStatus(
+      "Some unsaved words could not be restored, so Dreamy kept them safe in Documents\\Dreamy as " +
+        names.join(", ") + ". Nothing was deleted.",
+      "error"
+    );
+  }
+
+  // Moves a stored copy aside under a recovery name. The words stay on disk.
+  async function keepAside(kind) {
+    const name = await invoke("preserve_draft", { kind });
+    if (name) reportRecovered([name]);
+  }
+
+  // Reads one stored copy. A copy that is not valid JSON is kept aside, never dropped.
   async function loadDraft(kind) {
     const text = await invoke("load_draft", { kind });
     if (!text) return null;
     try {
       return JSON.parse(text);
     } catch (err) {
+      await keepAside(kind);
       return null;
     }
   }
@@ -1981,15 +2006,63 @@
         if (state.journal.some((d) => d.name === editor.name)) {
           openEditor(editor.name, null, editor);
         } else {
-          // The dream was moved or deleted since, so there is nothing to restore onto
-          queueDraft("clear_draft", { kind: "editor" }, "editor");
+          // The dream was moved or deleted since, so its words are kept aside, not dropped
+          await keepAside("editor");
         }
       }
+
+      // Copies that Rust moved aside at startup. Shown last, so no other message replaces it.
+      reportRecovered(await invoke("take_draft_recovery"));
     } catch (err) {
       setStatus("Could not restore your unsaved words: " + err, "error");
     } finally {
       draftsReady = true;
       syncDrafts();
+    }
+  }
+
+  /* ==========================================================================
+     Install approval. A downloaded update waits until the window holds no unsaved
+     words. Dreamy approves it only after every queued copy is written and both drafts
+     are empty. The capture card and the editor are then held shut, so no word can be
+     typed between that check and the installer starting. Rust checks the words once
+     more before it installs.
+     ========================================================================== */
+  let updateToken = null; // the verified update waiting for approval, or null
+  let approvalChecking = false; // a check is already running, so it is not started twice
+  let installHold = false; // true from approval until the installer takes over
+
+  // Holds the capture card and the editor shut while an install is being approved
+  function setInstallHold(on) {
+    installHold = on;
+    $(".card").inert = on;
+    editorEl.inert = on || !editing;
+  }
+
+  async function requestInstallApproval() {
+    if (updateToken === null || installHold || approvalChecking || !draftsReady) return;
+    approvalChecking = true;
+    try {
+      // Wait until no write is queued, including any queued while waiting
+      let settled;
+      do {
+        settled = draftQueue;
+        await settled;
+      } while (settled !== draftQueue);
+
+      // Nothing awaits from here to the hold, so no keystroke can land in between.
+      // A save still running would be cut off by the installer, so it goes first.
+      if (updateToken === null || saving || (editing && editing.saving)) return;
+      if (captureDraft() !== null || editorDraft() !== null) return; // words still here: keep waiting
+
+      const token = updateToken;
+      setInstallHold(true);
+      invoke("approve_update_install", { token }).catch(() => {
+        // Refused, or the install did not start: the update keeps waiting and typing resumes
+        setInstallHold(false);
+      });
+    } finally {
+      approvalChecking = false;
     }
   }
 
