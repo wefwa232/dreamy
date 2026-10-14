@@ -1483,6 +1483,13 @@
     setTimeout(() => ripple.remove(), 750);
   });
 
+  // The app has its own right-click menus on dreams. Elsewhere the browser's default
+  // menu (Back, Reload, Inspect) must not appear, but text fields keep it for copy and paste.
+  document.addEventListener("contextmenu", (event) => {
+    if (event.target.closest("input, textarea, [contenteditable]")) return;
+    event.preventDefault();
+  });
+
   function burst(anchor, count) {
     if (!state.motion) return;
     const rect = anchor.getBoundingClientRect();
