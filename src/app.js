@@ -26,12 +26,12 @@
         if (cmd === "load_tags") return preview.tags;
         if (cmd === "update_dream") {
           if (!(args.filename in preview.dreams)) throw new Error("This dream no longer exists");
-          if (args.filename.slice(0, 16) === args.dateStamp) { preview.dreams[args.filename] = args.content; return args.filename; }
+          if (args.filename.slice(0, 16) === args.dateStamp) { preview.dreams[args.filename] = args.content; return [args.filename, null]; }
           let name = args.dateStamp + ".md";
           for (let n = 2; name in preview.dreams; n++) name = args.dateStamp + "_" + n + ".md";
           preview.dreams[name] = args.content;
           delete preview.dreams[args.filename];
-          return name;
+          return [name, null];
         }
         if (cmd === "delete_dreams") {
           const moved = [];
@@ -1268,9 +1268,16 @@
     editStatus.className = "status" + (kind ? " " + kind : "");
   }
 
-  // Everything the editor shows, as text, to tell whether anything changed
+  // Everything the editor shows, as text, to tell whether anything changed.
+  // A tag typed but not yet entered counts as a change too.
   function editSnapshot() {
-    return JSON.stringify({ time: editTime.value, level: editing.level, tags: editing.tags, text: editText.value });
+    return JSON.stringify({
+      time: editTime.value,
+      level: editing.level,
+      tags: editing.tags,
+      pendingTag: editTagInput.value,
+      text: editText.value,
+    });
   }
 
   function syncEditLevels() {
@@ -1429,7 +1436,8 @@
     editing.saving = true;
     editSave.disabled = true;
     try {
-      const saved = await invoke("update_dream", {
+      // leftover is set only when the new copy was written but the old one could not be removed
+      const [saved, leftover] = await invoke("update_dream", {
         filename: name,
         dateStamp: fileStamp(editTime.value),
         content: header + editText.value.trim() + "\n",
@@ -1437,7 +1445,16 @@
       // Keep the dream ticked if it was ticked before it moved to a new date
       if (state.picked.delete(name)) state.picked.add(saved);
       closeEditor();
-      setSideNote("Saved " + prettyName(saved) + ".", "ok");
+      if (leftover) {
+        // Both copies exist now. Close the editor so a retry cannot make a third copy.
+        setSideNote(
+          "Saved as " + prettyName(saved) + ", but the old copy " + prettyName(leftover) +
+            " could not be removed. Both copies are still in your Dreams folder. Nothing was deleted; check them there.",
+          "error"
+        );
+      } else {
+        setSideNote("Saved " + prettyName(saved) + ".", "ok");
+      }
       await refreshRecent();
     } catch (err) {
       setEditStatus("Could not save: " + err, "error");

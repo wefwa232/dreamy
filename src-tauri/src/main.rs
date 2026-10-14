@@ -74,16 +74,45 @@ fn save_tags(content: String) -> Result<(), String> {
     replace_file(&target, &content, &temp_path_for(&target))
 }
 
-/// True only for names shaped like "2026-10-13_07-12": the date and time a dream
-/// is saved under. Anything else (empty, path separators, "x.md") is refused.
+/// True only for names shaped like "2026-10-13_07-12" that also name a real
+/// moment: a real month, a day that exists in that month (leap years included),
+/// an hour from 0 to 23 and a minute from 0 to 59. Year 0000 is refused.
+/// Anything else (empty, path separators, "x.md", "2026-02-30_10-00") is refused.
 fn is_dream_stamp(stem: &str) -> bool {
     let bytes = stem.as_bytes();
-    bytes.len() == 16
+    let shape_ok = bytes.len() == 16
         && bytes.iter().enumerate().all(|(i, &b)| match i {
             4 | 7 | 13 => b == b'-',
             10 => b == b'_',
             _ => b.is_ascii_digit(),
-        })
+        });
+    if !shape_ok {
+        return false;
+    }
+    // Shape is checked above, so every field is plain ASCII digits
+    let field = |range: std::ops::Range<usize>| -> u32 { stem[range].parse().unwrap_or(0) };
+    let (year, month, day) = (field(0..4), field(5..7), field(8..10));
+    let (hour, minute) = (field(11..13), field(14..16));
+    year >= 1
+        && (1..=12).contains(&month)
+        && (1..=days_in_month(year, month)).contains(&day)
+        && hour <= 23
+        && minute <= 59
+}
+
+/// Days in a month of the Gregorian calendar. `month` must be 1 to 12.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// Gregorian leap years: every 4th year, except centuries not divisible by 400.
+fn is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 /// Give the finished temporary file its real name without replacing anything.
@@ -325,10 +354,22 @@ fn delete_dreams(filenames: Vec<String>) -> Result<(Vec<String>, Vec<String>), S
 }
 
 /// Save an edit to one dream. Text-only edits replace the file in place, atomically.
-/// A new date gives the dream a new file name (never replacing another dream), and
-/// the old file is removed only after the new one is safely written.
-/// Returns the file name the dream is now saved under.
-fn update_dream_in(dreams: &Path, filename: &str, date_stamp: &str, content: &str) -> Result<String, String> {
+/// A new date gives the dream a new file name (never replacing another dream).
+///
+/// Returns `(saved_as, leftover)`:
+/// - `saved_as` is the file name the dream is now saved under.
+/// - `leftover` is `None` on a clean save. It is `Some(old_name)` when the new copy
+///   was written but the old copy could not be removed (for example, another program
+///   has it open). Both copies then remain in Dreams. Nothing is deleted to recover
+///   from that, and the caller must say so.
+///
+/// An `Err` means nothing new was written, and the original is untouched.
+fn update_dream_in(
+    dreams: &Path,
+    filename: &str,
+    date_stamp: &str,
+    content: &str,
+) -> Result<(String, Option<String>), String> {
     if !is_dream_file(filename) {
         return Err("Invalid file name".to_string());
     }
@@ -342,19 +383,24 @@ fn update_dream_in(dreams: &Path, filename: &str, date_stamp: &str, content: &st
 
     if date_stamp_of(filename) == date_stamp {
         replace_file(&old_path, content, &temp_path_for(&old_path))?;
-        return Ok(filename.to_string());
+        return Ok((filename.to_string(), None));
     }
 
     let temp = temp_path_for(&dreams.join(format!("{date_stamp}.md")));
     let new_name = store_new_dream(dreams, date_stamp, content, &temp)?;
-    fs::remove_file(&old_path)
-        .map_err(|e| format!("Saved as {new_name}, but the old file could not be removed: {e}"))?;
-    Ok(new_name)
+    match fs::remove_file(&old_path) {
+        Ok(()) => Ok((new_name, None)),
+        Err(_) => Ok((new_name, Some(filename.to_string()))),
+    }
 }
 
-/// Save an edit to one dream. Returns the file name it is now saved under.
+/// Save an edit to one dream. Returns `(saved_as, leftover)`, see `update_dream_in`.
 #[tauri::command]
-fn update_dream(filename: String, date_stamp: String, content: String) -> Result<String, String> {
+fn update_dream(
+    filename: String,
+    date_stamp: String,
+    content: String,
+) -> Result<(String, Option<String>), String> {
     update_dream_in(&dreams_dir()?, &filename, &date_stamp, &content)
 }
 
@@ -778,16 +824,16 @@ mod tests {
         fs::write(dir.join("2026-10-13_07-12.md"), "old").unwrap();
         fs::write(dir.join("2026-10-13_07-12_2.md"), "second").unwrap();
 
-        // Text only: same file, new text
+        // Text only: same file, new text, no leftover copy
         assert_eq!(
             update_dream_in(&dir, "2026-10-13_07-12.md", "2026-10-13_07-12", "new").unwrap(),
-            "2026-10-13_07-12.md"
+            ("2026-10-13_07-12.md".to_string(), None)
         );
         assert_eq!(fs::read_to_string(dir.join("2026-10-13_07-12.md")).unwrap(), "new");
 
         // A suffixed file keeps its suffix while its date is unchanged
         assert_eq!(
-            update_dream_in(&dir, "2026-10-13_07-12_2.md", "2026-10-13_07-12", "second edit").unwrap(),
+            update_dream_in(&dir, "2026-10-13_07-12_2.md", "2026-10-13_07-12", "second edit").unwrap().0,
             "2026-10-13_07-12_2.md"
         );
         assert_eq!(fs::read_to_string(dir.join("2026-10-13_07-12_2.md")).unwrap(), "second edit");
@@ -796,7 +842,7 @@ mod tests {
         fs::write(dir.join("2026-10-14_09-00.md"), "taken").unwrap();
         assert_eq!(
             update_dream_in(&dir, "2026-10-13_07-12.md", "2026-10-14_09-00", "moved").unwrap(),
-            "2026-10-14_09-00_2.md"
+            ("2026-10-14_09-00_2.md".to_string(), None)
         );
         assert!(!dir.join("2026-10-13_07-12.md").exists());
         assert_eq!(fs::read_to_string(dir.join("2026-10-14_09-00.md")).unwrap(), "taken");
@@ -805,10 +851,78 @@ mod tests {
         // Refused: bad file names, bad dates, and dreams that do not exist
         assert!(update_dream_in(&dir, "../x.md", "2026-10-14_09-00", "x").is_err());
         assert!(update_dream_in(&dir, "2026-10-14_09-00.md", "not-a-date", "x").is_err());
+        assert!(update_dream_in(&dir, "2026-10-14_09-00.md", "2026-02-30_10-00", "x").is_err());
         assert!(update_dream_in(&dir, "2026-10-15_10-00.md", "2026-10-15_10-00", "x").is_err());
         assert!(!dir.join("2026-10-15_10-00.md").exists());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Windows only. The old copy is held open with no sharing, so Windows cannot
+    /// remove it. The new copy must still be written, and the result must say that
+    /// both copies remain. Neither copy may be deleted to recover.
+    #[cfg(windows)]
+    #[test]
+    fn date_change_reports_both_copies_when_the_old_one_cannot_be_removed() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = scratch("partial");
+        let dir = root.join("Dreams");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("2026-10-13_07-12.md"), "old text").unwrap();
+
+        // share_mode(0): no other handle may delete or write this file while it is open
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(dir.join("2026-10-13_07-12.md"))
+            .unwrap();
+        let (saved, leftover) =
+            update_dream_in(&dir, "2026-10-13_07-12.md", "2026-10-14_09-00", "new text").unwrap();
+        drop(held);
+
+        assert_eq!(saved, "2026-10-14_09-00.md");
+        assert_eq!(leftover, Some("2026-10-13_07-12.md".to_string()));
+        assert_eq!(fs::read_to_string(dir.join(&saved)).unwrap(), "new text");
+        assert_eq!(fs::read_to_string(dir.join("2026-10-13_07-12.md")).unwrap(), "old text");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Calendar rules: real months, days that exist in that month (leap years
+    /// included), hours 0 to 23, minutes 0 to 59. Applies to new names and edits.
+    #[test]
+    fn date_stamps_must_be_real_calendar_moments() {
+        for valid in [
+            "2026-10-13_07-12",
+            "2024-02-29_12-00", // leap year
+            "2000-02-29_00-00", // divisible by 400, so a leap year
+            "2026-04-30_23-59",
+            "2026-12-31_23-59",
+            "2026-01-01_00-00",
+        ] {
+            assert!(is_dream_stamp(valid), "rejected valid {valid}");
+        }
+        for invalid in [
+            "2023-02-29_12-00", // not a leap year
+            "1900-02-29_12-00", // divisible by 100 but not 400, so not a leap year
+            "2026-02-30_12-00",
+            "2026-04-31_12-00", // April has 30 days
+            "2026-13-01_12-00",
+            "2026-00-10_12-00",
+            "2026-10-00_12-00",
+            "2026-10-32_12-00",
+            "2026-10-13_24-00",
+            "2026-10-13_12-60",
+            "0000-01-01_12-00",
+            "2026-10-13_07-12x",
+        ] {
+            assert!(!is_dream_stamp(invalid), "accepted invalid {invalid}");
+        }
+
+        // The same rule applies to file names on disk, so a bad name is never deleted or edited
+        assert!(is_dream_file("2024-02-29_12-00_2.md"));
+        assert!(!is_dream_file("2023-02-29_12-00.md"));
     }
 
     /// Temporary names are unique, sit in the destination's folder, and stay hidden.
