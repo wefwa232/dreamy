@@ -11,6 +11,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
+mod drafts;
 mod updates;
 
 /// Dreamy's data folder: Documents\Dreamy
@@ -414,6 +415,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates::UpdateState::default())
+        .manage(drafts::Unsaved::default())
         .invoke_handler(tauri::generate_handler![
             save_dream,
             list_dreams,
@@ -423,6 +425,10 @@ fn main() {
             delete_dreams,
             load_tags,
             save_tags,
+            drafts::save_draft,
+            drafts::load_draft,
+            drafts::clear_draft,
+            drafts::set_unsaved_changes,
             updates::get_update_status,
             updates::dismiss_update_status
         ])
@@ -457,6 +463,11 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Words left from before a restart already hold an update, before the window has opened
+            if let Err(err) = drafts::restore_unsaved_state(&app.state::<drafts::Unsaved>()) {
+                eprintln!("Could not read unsaved words: {err}");
+            }
 
             // Look for a newer release in the background. Startup does not wait for it.
             updates::check_in_background(app.handle().clone());

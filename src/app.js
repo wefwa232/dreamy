@@ -677,6 +677,7 @@
       renderLibrary();
       setLevel(0);
       setNow();
+      syncDrafts(); // the card is empty again, so its saved copy goes too
       refreshRecent();
     } catch (err) {
       setStatus("Could not save: " + err, "error");
@@ -1370,7 +1371,9 @@
     if (event.target === editTagfield) editTagInput.focus();
   });
 
-  function openEditor(name, focus) {
+  // `draft` (optional) is unsaved words restored after a restart. They are shown over
+  // the saved dream, and `original` stays the saved version, so the editor still counts them as unsaved.
+  function openEditor(name, focus, draft) {
     const dream = state.journal.find((d) => d.name === name);
     if (!dream) {
       setSideNote("That dream could not be found.", "error");
@@ -1386,6 +1389,16 @@
     renderEditTags();
     setEditStatus("");
     editing.original = editSnapshot();
+    if (draft) {
+      editTime.value = typeof draft.time === "string" && draft.time ? draft.time : editTime.value;
+      editing.level = Number.isInteger(draft.level) ? Math.min(LEVELS.length - 1, Math.max(0, draft.level)) : editing.level;
+      editing.tags = Array.isArray(draft.tags) ? draft.tags.filter((t) => typeof t === "string") : editing.tags;
+      editText.value = typeof draft.text === "string" ? draft.text : editText.value;
+      editTagInput.value = typeof draft.pendingTag === "string" ? draft.pendingTag : "";
+      syncEditLevels();
+      renderEditTags();
+      setEditStatus("Restored your unsaved changes. Save them, or press Cancel to drop them.");
+    }
     editorEl.inert = false;
     editorEl.classList.add("open");
     editorEl.setAttribute("aria-hidden", "false");
@@ -1394,6 +1407,7 @@
 
   function closeEditor() {
     editing = null;
+    syncDrafts(); // closing ends the edit, so its saved copy goes too
     editorEl.classList.remove("open");
     editorEl.setAttribute("aria-hidden", "true");
     editorEl.inert = true;
@@ -1812,7 +1826,7 @@
   function renderUpdateStatus(status) {
     const state = status && status.state;
     const failed = state === "failed";
-    const working = state === "downloading" || state === "installing";
+    const working = state === "downloading" || state === "waiting" || state === "installing";
     updateNote.hidden = !(failed || working);
     updateNote.classList.toggle("failed", failed);
     updateNote.classList.toggle("working", working);
@@ -1820,6 +1834,8 @@
     if (state === "downloading") {
       const percent = typeof status.percent === "number" ? " " + status.percent + "%" : "";
       updateText.textContent = "Updating Dreamy…" + percent;
+    } else if (state === "waiting") {
+      updateText.textContent = "Update ready. It will install once your unsaved words are saved.";
     } else if (state === "installing") {
       updateText.textContent = "Updating Dreamy… restarting";
     } else if (failed) {
@@ -1859,6 +1875,125 @@
   });
 
   /* ==========================================================================
+     Unsaved words. The capture card and the open editor keep a copy in the data
+     folder as they change, so a restart (an update's, for example) cannot lose
+     them. The copy is removed after a save or a discard. While words are unsaved
+     the window reports it, and an update waits before it restarts Dreamy.
+     ========================================================================== */
+  // busy starts unknown (null), so the first sync always tells Rust what the window holds
+  const lastDraft = { capture: null, editor: null, busy: null };
+  let draftsReady = false; // nothing is written until the saved copies have been read
+  let draftQueue = Promise.resolve(); // writes run one at a time, so the newest always lands last
+
+  function reportDraftError(kind) {
+    const show = kind === "capture" ? setStatus : setEditStatus;
+    return (err) => show("Could not keep a copy of your unsaved words: " + err, "error");
+  }
+
+  function queueDraft(cmd, args, kind) {
+    draftQueue = draftQueue.then(() => invoke(cmd, args)).catch(reportDraftError(kind));
+  }
+
+  // The capture card's words, or null when the card holds no words, tags or lucidity.
+  // The date alone is not unsaved words, so changing it never keeps a draft (or an update) waiting.
+  function captureDraft() {
+    const untouched = !dreamEl.value && !tagInput.value && !state.selected.length && state.level === 0;
+    if (untouched) return null;
+    return JSON.stringify({
+      text: dreamEl.value,
+      date: dreamTime.value,
+      lucidity: state.level,
+      tags: [...state.selected],
+      pendingTag: tagInput.value,
+    });
+  }
+
+  // The open editor's changes, or null when nothing is unsaved
+  function editorDraft() {
+    if (!editing || editSnapshot() === editing.original) return null;
+    return JSON.stringify({
+      name: editing.name,
+      time: editTime.value,
+      level: editing.level,
+      tags: [...editing.tags],
+      pendingTag: editTagInput.value,
+      text: editText.value,
+    });
+  }
+
+  // Brings the stored copies in step with the screen. Runs after every change.
+  // Only what changed is written.
+  function syncDrafts() {
+    if (!window.__TAURI__ || !draftsReady) return;
+    const capture = captureDraft();
+    if (capture !== lastDraft.capture) {
+      lastDraft.capture = capture;
+      if (capture === null) queueDraft("clear_draft", { kind: "capture" }, "capture");
+      else queueDraft("save_draft", { kind: "capture", content: capture }, "capture");
+    }
+    const editor = editorDraft();
+    if (editor !== lastDraft.editor) {
+      lastDraft.editor = editor;
+      if (editor === null) queueDraft("clear_draft", { kind: "editor" }, "editor");
+      else queueDraft("save_draft", { kind: "editor", content: editor }, "editor");
+    }
+    const busy = capture !== null || editor !== null;
+    if (busy !== lastDraft.busy) {
+      lastDraft.busy = busy;
+      queueDraft("set_unsaved_changes", { busy }, "capture");
+    }
+  }
+
+  // Every change on screen passes through one of these events, so the copies follow along
+  ["input", "change", "click", "keydown"].forEach((type) => document.addEventListener(type, syncDrafts));
+
+  function applyCaptureDraft(draft) {
+    dreamEl.value = typeof draft.text === "string" ? draft.text : "";
+    if (typeof draft.date === "string" && draft.date) dreamTime.value = draft.date;
+    setLevel(Number.isInteger(draft.lucidity) ? Math.min(LEVELS.length - 1, Math.max(0, draft.lucidity)) : 0);
+    state.selected = Array.isArray(draft.tags) ? draft.tags.filter((t) => typeof t === "string") : [];
+    tagInput.value = typeof draft.pendingTag === "string" ? draft.pendingTag : "";
+    renderPills();
+    renderLibrary();
+    setStatus("Restored your unsaved dream from before the restart.", "ok");
+  }
+
+  // Reads one stored copy. A copy that cannot be read is ignored, not shown.
+  async function loadDraft(kind) {
+    const text = await invoke("load_draft", { kind });
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // Runs once at startup, after the journal is read, so an editor draft can find its dream
+  async function restoreDrafts() {
+    if (!window.__TAURI__) return;
+    try {
+      const capture = await loadDraft("capture");
+      if (capture) applyCaptureDraft(capture);
+
+      const editor = await loadDraft("editor");
+      if (editor) {
+        if (state.journal.some((d) => d.name === editor.name)) {
+          openEditor(editor.name, null, editor);
+        } else {
+          // The dream was moved or deleted since, so there is nothing to restore onto
+          queueDraft("clear_draft", { kind: "editor" }, "editor");
+        }
+      }
+    } catch (err) {
+      setStatus("Could not restore your unsaved words: " + err, "error");
+    } finally {
+      draftsReady = true;
+      syncDrafts();
+    }
+  }
+
+  /* ==========================================================================
      Start
      ========================================================================== */
   async function init() {
@@ -1883,7 +2018,8 @@
 
     await loadLibrary();
     renderLibrary();
-    refreshRecent();
+    await refreshRecent();
+    await restoreDrafts();
 
     updateDawnSky();
     resizeSky();

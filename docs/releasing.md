@@ -8,8 +8,13 @@ parts must be kept safe for good.
 - Every time Dreamy opens, it asks GitHub whether a newer **stable** release exists.
   Drafts and pre-releases are ignored, so only finished releases reach your PC.
 - If there is nothing newer, Dreamy opens as usual and says nothing.
-- If there is a newer version, Dreamy downloads and installs it, shows
-  "Updating Dreamy…" in a small line, and reopens on the new version.
+- If there is a newer version, Dreamy downloads it, shows "Updating Dreamy…" in a
+  small line, and installs it. Then it reopens on the new version.
+- **Unsaved words are never lost to an update.** If a dream is half written on the
+  capture card, or an edit is open and unsaved, the update waits. The line then says
+  "Update ready. It will install once your unsaved words are saved." Save the dream
+  or clear the card, and the update installs. Words on the card or in an edit are
+  also kept on disk, so a restart brings them back.
 - If the PC is offline, GitHub is unavailable, or the download fails, Dreamy still
   opens normally. A small note says the update could not be completed, and it tries
   again the next time you open Dreamy.
@@ -41,18 +46,24 @@ themselves. Install **0.1.1** once, by hand, from its GitHub Release (the
    git push origin v0.1.2
    ```
 
-5. GitHub Actions does the rest. It checks the version numbers, builds the Windows
-   installer, signs it, and publishes the release with its `latest.json` file.
+5. GitHub Actions does the rest. It checks the version numbers, runs the checks
+   (the JavaScript syntax check, the Rust tests and the Rust build check), builds the
+   Windows installer, signs it, and publishes the release with its `latest.json` file.
    Follow it on the repository's **Actions** tab. It usually takes 10 to 20 minutes.
 6. Check the **Releases** page: the new version should be marked **Latest**.
 
-A tag with a dash, such as `v0.2.0-beta.1`, is published as a pre-release, so no
-installed copy will update to it. Use that for test builds.
+Only plain version tags such as `v0.1.2` are accepted. A tag with a suffix, such as
+`v0.2.0-beta.1`, is refused, so no unfinished build can reach installed copies.
 
-The release is refused, and nothing is published, if:
+Nothing is published if any of these stop the run:
 
-- the three version numbers do not match the tag, or
-- the tag is not higher than the latest stable release.
+- the tag is not a plain version, or
+- any of the five version records does not match the tag. They are `package.json`,
+  both version entries in `package-lock.json`, `src-tauri/tauri.conf.json`,
+  `src-tauri/Cargo.toml` and Dreamy's entry in `src-tauri/Cargo.lock`. `npm run bump`
+  sets all five, or
+- the tag is not higher than the latest stable release, or
+- a check fails. The checks run before the key is used, so a failing build is never signed.
 
 ## Signing keys: what to keep safe
 
@@ -78,8 +89,11 @@ a log. The `.gitignore` file blocks the usual key file names as a safety net.
 ## If something goes wrong
 
 - **The Actions run fails at the version check:** a version number in the project
-  does not match the tag, or the tag is not higher than the latest stable release.
-  Fix the number with `npm run bump`, then tag again with a new number.
+  does not match the tag, the tag has a suffix, or the tag is not higher than the
+  latest stable release. Fix the number with `npm run bump`, then tag again with a
+  new number.
+- **The Actions run fails at the checks:** a test or check did not pass, so nothing
+  was built, signed or published. Fix the problem, then tag again with a new number.
 - **The build fails at signing:** the two GitHub secrets are missing or wrong.
   Check the secret names (they are case-sensitive) and that the password matches.
 - **Installed copies do not update:** check that the release is marked **Latest**

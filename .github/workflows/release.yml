@@ -31,16 +31,18 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      - name: Check the tag matches the app's version everywhere
+      - name: Check the tag is a plain version and matches every version file
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          pkg=$(node -p "require('./package.json').version")
-          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          cargo=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
-          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
-          if [ "$tag" != "$pkg" ] || [ "$tag" != "$conf" ] || [ "$tag" != "$cargo" ]; then
-            echo "The tag $GITHUB_REF_NAME does not match the versions in the project. Fix them, then tag again."
+          # Only plain versions are released. A suffix such as -beta is refused, so no unfinished build reaches installed copies.
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "The tag $GITHUB_REF_NAME is not a plain version such as v0.1.2. Nothing was published."
+            exit 1
+          fi
+          # Checks package.json, package-lock.json (both entries), tauri.conf.json, Cargo.toml and Cargo.lock
+          if ! node scripts/bump-version.js --check "$tag"; then
+            echo "The version files do not all match the tag $GITHUB_REF_NAME. Fix them with npm run bump, then tag again."
             exit 1
           fi
 
@@ -75,6 +77,15 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Every check must pass before anything is built, signed or published. A failed
+      # step stops the job here, so the signing key is never used for a failing build.
+      - name: Run the checks
+        shell: bash
+        run: |
+          node --check src/app.js
+          cargo test --manifest-path src-tauri/Cargo.toml
+          cargo check --manifest-path src-tauri/Cargo.toml
+
       - name: Build, sign and publish the release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
@@ -86,8 +97,7 @@ jobs:
           releaseName: "Dreamy ${{ github.ref_name }}"
           releaseBody: "Installed copies of Dreamy update to this version automatically. Your dreams and tag library are not changed by an update."
           releaseDraft: false
-          # A tag with a dash (for example v0.2.0-beta.1) is a pre-release, and installed copies never update to it
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: --config src-tauri/tauri.release.conf.json

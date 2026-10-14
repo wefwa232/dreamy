@@ -13,6 +13,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::drafts;
+
 /// The tray icon's id, so its tooltip can show update progress.
 pub const TRAY_ID: &str = "dreamy-tray";
 
@@ -37,6 +39,9 @@ pub enum UpdateStatus {
     Idle,
     /// Downloading the new version. `percent` is `None` until the size is known.
     Downloading { percent: Option<u8> },
+    /// The update is downloaded and waits. The window has unsaved words, and the
+    /// installer would close Dreamy, so it installs once they are saved or discarded.
+    Waiting,
     /// The installer is starting. Dreamy closes and reopens on the new version.
     Installing,
     /// The update could not be completed. Dreamy keeps running.
@@ -131,7 +136,7 @@ impl UpdateLock {
 /// The tray tooltip. It says "updating" while the window may be hidden.
 fn tooltip_for(status: &UpdateStatus) -> &'static str {
     match status {
-        UpdateStatus::Downloading { .. } | UpdateStatus::Installing => "Dreamy (updating…)",
+        UpdateStatus::Downloading { .. } | UpdateStatus::Waiting | UpdateStatus::Installing => "Dreamy (updating…)",
         UpdateStatus::Idle | UpdateStatus::Failed { .. } => "Dreamy",
     }
 }
@@ -181,8 +186,9 @@ async fn check_and_install(app: &AppHandle) -> Result<(), String> {
     state.set(app, UpdateStatus::Downloading { percent: None });
     let mut received: u64 = 0;
     let mut shown: Option<u8> = None;
-    update
-        .download_and_install(
+    // The download is checked against the signature here, before anything is installed
+    let package = update
+        .download(
             |chunk, total| {
                 received = received.saturating_add(chunk as u64);
                 // Only tell the window when the whole-number percentage changes
@@ -192,10 +198,25 @@ async fn check_and_install(app: &AppHandle) -> Result<(), String> {
                     state.set(app, UpdateStatus::Downloading { percent });
                 }
             },
-            || state.set(app, UpdateStatus::Installing),
+            || {},
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // The installer closes Dreamy. Never let it do that while words are unsaved:
+    // wait until the window reports none, then install.
+    if app.state::<drafts::Unsaved>().busy() {
+        state.set(app, UpdateStatus::Waiting);
+        let waiting_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            drafts::wait_until_clear(&waiting_app.state::<drafts::Unsaved>(), Duration::from_secs(1));
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    state.set(app, UpdateStatus::Installing);
+    update.install(package).map_err(|e| e.to_string())
 }
 
 /// The window asks for the status when it opens, in case the event came first.
@@ -242,6 +263,7 @@ mod tests {
     fn statuses_serialise_to_the_shape_the_window_expects() {
         let json = |s: UpdateStatus| serde_json::to_value(s).unwrap();
         assert_eq!(json(UpdateStatus::Idle), serde_json::json!({ "state": "idle" }));
+        assert_eq!(json(UpdateStatus::Waiting), serde_json::json!({ "state": "waiting" }));
         assert_eq!(json(UpdateStatus::Installing), serde_json::json!({ "state": "installing" }));
         assert_eq!(
             json(UpdateStatus::Downloading { percent: Some(40) }),
@@ -277,6 +299,7 @@ mod tests {
         assert_eq!(tooltip_for(&UpdateStatus::Idle), "Dreamy");
         assert_eq!(tooltip_for(&UpdateStatus::Failed { message: String::new() }), "Dreamy");
         assert_eq!(tooltip_for(&UpdateStatus::Downloading { percent: None }), "Dreamy (updating…)");
+        assert_eq!(tooltip_for(&UpdateStatus::Waiting), "Dreamy (updating…)");
         assert_eq!(tooltip_for(&UpdateStatus::Installing), "Dreamy (updating…)");
     }
 }

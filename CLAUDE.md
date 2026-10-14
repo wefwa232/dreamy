@@ -30,7 +30,8 @@ The owner is not a developer and does not read code. They want Claude to build a
 - `src/app.js`: all behaviour. Sections are marked with headings: backend bridge, tags, saving, recent list, reader, sidebar, sky canvas, settings, start.
 - `src/styles.css`: theme tokens at the top, then components.
 - `src-tauri/src/main.rs`: file commands (`save_dream`, `list_dreams`, `read_dreams`, `read_dream`, `load_tags`, `save_tags`), tray, and startup.
-- `src-tauri/src/updates.rs`: automatic updates (check at startup, download, install, status messages). Release steps and key handling are in [docs/releasing.md](docs/releasing.md).
+- `src-tauri/src/updates.rs`: automatic updates (check at startup, download, install, status messages).
+- `src-tauri/src/drafts.rs`: unsaved capture and editor words, kept in `Documents\Dreamy` and held back from updates. Release steps and key handling are in [docs/releasing.md](docs/releasing.md).
 - `.github/workflows/release.yml`: builds, signs and publishes a release when a `v*` tag is pushed.
 - `scripts/bump-version.js`: `npm run bump -- 0.1.2` sets the version in every file that records it.
 
