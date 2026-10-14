@@ -10,9 +10,15 @@
   const invoke = window.__TAURI__
     ? window.__TAURI__.core.invoke
     : async (cmd, args = {}) => {
-        if (cmd === "save_dream") { preview.dreams[args.filename] = args.content; return args.filename; }
+        if (cmd === "save_dream") {
+          const stem = args.filename.replace(/\.md$/, "");
+          let name = args.filename;
+          for (let n = 2; name in preview.dreams; n++) name = stem + "_" + n + ".md";
+          preview.dreams[name] = args.content;
+          return name;
+        }
         if (cmd === "list_dreams") return Object.keys(preview.dreams).sort().reverse();
-        if (cmd === "read_dreams") return Object.keys(preview.dreams).sort().reverse().map((name) => [name, preview.dreams[name]]);
+        if (cmd === "read_dreams") return [Object.keys(preview.dreams).sort().reverse().map((name) => [name, preview.dreams[name]]), []];
         if (cmd === "read_dream") {
           if (!(args.filename in preview.dreams)) throw new Error("Not found: " + args.filename);
           return preview.dreams[args.filename];
@@ -216,7 +222,7 @@
   }
 
   function prettyName(name) {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})\.md$/);
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_\d+)?\.md$/);
     if (!m) return name;
     const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
     return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -265,16 +271,27 @@
     return COLORS[state.library.length % COLORS.length];
   }
 
+  // Set when tags.json exists but cannot be read. Saving is then refused, so the
+  // damaged file is never replaced by an empty or rebuilt library.
+  let libraryReadFailed = false;
+
   async function loadLibrary() {
     try {
       const parsed = JSON.parse(await invoke("load_tags"));
-      state.library = Array.isArray(parsed) ? parsed : [];
+      if (!Array.isArray(parsed)) throw new Error("tags.json is not a list of tags");
+      state.library = parsed;
     } catch (err) {
       state.library = [];
+      libraryReadFailed = true;
+      setStatus("Your tag library (tags.json) could not be read. Tag changes will not be saved until it is fixed.", "error");
     }
   }
 
   async function persistLibrary() {
+    if (libraryReadFailed) {
+      setStatus("Tag change not saved: tags.json could not be read.", "error");
+      return;
+    }
     try {
       await invoke("save_tags", { content: JSON.stringify(state.library, null, 2) });
     } catch (err) {
@@ -586,7 +603,10 @@
   /* ==========================================================================
      Saving a dream
      ========================================================================== */
+  let saving = false; // one save at a time, even for rapid clicks or Ctrl+Enter
+
   async function saveDream() {
+    if (saving) return;
     if (tagInput.value.trim()) {
       selectTag(tagInput.value);
       tagInput.value = "";
@@ -596,6 +616,11 @@
     if (!text) {
       setStatus("Nothing to save yet.", "error");
       dreamEl.focus();
+      return;
+    }
+    if (!dreamTime.value) {
+      setStatus("Pick a date and time for this dream first.", "error");
+      dreamTime.focus();
       return;
     }
 
@@ -610,9 +635,11 @@
 
     const filename = fileStamp(dreamTime.value) + ".md";
 
+    saving = true;
+    saveBtn.disabled = true;
     try {
-      await invoke("save_dream", { filename, content: header + text + "\n" });
-      setStatus("Saved " + prettyName(filename), "ok");
+      const saved = await invoke("save_dream", { filename, content: header + text + "\n" });
+      setStatus("Saved " + prettyName(saved), "ok");
       burst(saveBtn, 16);
       dreamEl.value = "";
       state.selected = [];
@@ -623,6 +650,9 @@
       refreshRecent();
     } catch (err) {
       setStatus("Could not save: " + err, "error");
+    } finally {
+      saving = false;
+      saveBtn.disabled = false;
     }
   }
 
@@ -651,11 +681,16 @@
      ========================================================================== */
   async function refreshRecent() {
     try {
-      const pairs = await invoke("read_dreams");
+      const [pairs, unreadable] = await invoke("read_dreams");
       state.journal = pairs.map(([name, content]) => ({ name, ...parseDream(content) }));
       state.dreams = state.journal.map((dream) => dream.name);
       renderRecent();
       renderSidebar();
+      // Never hide a dream silently: say which files could not be read
+      if (unreadable.length) {
+        const noun = unreadable.length === 1 ? "dream file" : "dream files";
+        setStatus("Could not read " + unreadable.length + " " + noun + ": " + unreadable.join(", ") + ". They are still in your Dreams folder.", "error");
+      }
     } catch (err) {
       entriesEl.replaceChildren(el("div", { class: "empty", text: "Could not load entries." }));
       sideList.replaceChildren(el("div", { class: "empty", text: "Could not load dreams." }));
@@ -807,7 +842,7 @@
 
   // A dream's date spelled out in full, so "october" or "monday" can be searched
   function dateWords(name) {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})\.md$/);
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:_\d+)?\.md$/);
     if (!m) return name;
     const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
     return d.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" });
