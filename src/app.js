@@ -636,7 +636,7 @@
   let saving = false; // one save at a time, even for rapid clicks or Ctrl+Enter
 
   async function saveDream() {
-    if (saving) return;
+    if (saving || installHold) return;
     if (tagInput.value.trim()) {
       selectTag(tagInput.value);
       tagInput.value = "";
@@ -677,12 +677,14 @@
       renderLibrary();
       setLevel(0);
       setNow();
+      syncDrafts(); // the card is empty again, so its saved copy goes too
       refreshRecent();
     } catch (err) {
       setStatus("Could not save: " + err, "error");
     } finally {
       saving = false;
       saveBtn.disabled = false;
+      requestInstallApproval(); // a waiting update may now be released
     }
   }
 
@@ -1370,7 +1372,10 @@
     if (event.target === editTagfield) editTagInput.focus();
   });
 
-  function openEditor(name, focus) {
+  // `draft` (optional) is unsaved words restored after a restart. They are shown over
+  // the saved dream, and `original` stays the saved version, so the editor still counts them as unsaved.
+  function openEditor(name, focus, draft) {
+    if (installHold) return; // an install is being approved: nothing new opens
     const dream = state.journal.find((d) => d.name === name);
     if (!dream) {
       setSideNote("That dream could not be found.", "error");
@@ -1386,6 +1391,16 @@
     renderEditTags();
     setEditStatus("");
     editing.original = editSnapshot();
+    if (draft) {
+      editTime.value = typeof draft.time === "string" && draft.time ? draft.time : editTime.value;
+      editing.level = Number.isInteger(draft.level) ? Math.min(LEVELS.length - 1, Math.max(0, draft.level)) : editing.level;
+      editing.tags = Array.isArray(draft.tags) ? draft.tags.filter((t) => typeof t === "string") : editing.tags;
+      editText.value = typeof draft.text === "string" ? draft.text : editText.value;
+      editTagInput.value = typeof draft.pendingTag === "string" ? draft.pendingTag : "";
+      syncEditLevels();
+      renderEditTags();
+      setEditStatus("Restored your unsaved changes. Save them, or press Cancel to drop them.");
+    }
     editorEl.inert = false;
     editorEl.classList.add("open");
     editorEl.setAttribute("aria-hidden", "false");
@@ -1394,6 +1409,7 @@
 
   function closeEditor() {
     editing = null;
+    syncDrafts(); // closing ends the edit, so its saved copy goes too
     editorEl.classList.remove("open");
     editorEl.setAttribute("aria-hidden", "true");
     editorEl.inert = true;
@@ -1410,7 +1426,7 @@
   }
 
   async function saveEditor() {
-    if (!editing || editing.saving) return;
+    if (!editing || editing.saving || installHold) return;
     // A tag typed but not yet entered is added, as it is for a new dream
     if (editTagInput.value.trim()) {
       addEditTag(editTagInput.value);
@@ -1461,6 +1477,7 @@
     } finally {
       if (editing) editing.saving = false;
       editSave.disabled = false;
+      requestInstallApproval(); // a waiting update may now be released
     }
   }
 
@@ -1801,6 +1818,255 @@
   setInterval(updateDawnSky, 60 * 1000);
 
   /* ==========================================================================
+     Updates. The check and install run in the Rust backend, at startup. This only
+     shows the small line: "Updating Dreamy…" while it works, and a calm note if
+     it could not finish. The journal works the same either way.
+     ========================================================================== */
+  const updateNote = document.getElementById("updateNote");
+  const updateText = document.getElementById("updateText");
+  const updateDismiss = document.getElementById("updateDismiss");
+
+  function renderUpdateStatus(status) {
+    const state = status && status.state;
+    // Only a waiting update has a token to approve. Any other state means there is none to approve.
+    updateToken = state === "waiting" ? status.token : null;
+    if (updateToken !== null) requestInstallApproval();
+    const failed = state === "failed";
+    const working = state === "downloading" || state === "waiting" || state === "installing";
+    updateNote.hidden = !(failed || working);
+    updateNote.classList.toggle("failed", failed);
+    updateNote.classList.toggle("working", working);
+    updateDismiss.hidden = !failed;
+    if (state === "downloading") {
+      const percent = typeof status.percent === "number" ? " " + status.percent + "%" : "";
+      updateText.textContent = "Updating Dreamy…" + percent;
+    } else if (state === "waiting") {
+      updateText.textContent = "Update ready. It will install once your unsaved words are saved.";
+    } else if (state === "installing") {
+      updateText.textContent = "Updating Dreamy… restarting";
+    } else if (failed) {
+      updateText.textContent = status.message;
+    }
+  }
+
+  let updatesWatched = false;
+
+  async function watchUpdates() {
+    // Plain browser preview: there is no backend, so there is nothing to show.
+    // Starting twice would add a second listener, so only the first call counts.
+    if (!window.__TAURI__ || updatesWatched) return;
+    updatesWatched = true;
+    try {
+      // Listen first, so nothing sent between the two calls is missed. The stored
+      // status is drawn only if no event has arrived yet, so it never overwrites a newer one.
+      let heardEvent = false;
+      await window.__TAURI__.event.listen("update-status", (event) => {
+        heardEvent = true;
+        renderUpdateStatus(event.payload);
+      });
+      const status = await invoke("get_update_status");
+      if (!heardEvent) renderUpdateStatus(status);
+    } catch (err) {
+      // Updates are a bonus: if they cannot be watched, the journal carries on
+    }
+  }
+
+  updateDismiss.addEventListener("click", async () => {
+    try {
+      await invoke("dismiss_update_status");
+    } catch (err) {
+      // Hiding the note below is enough for this session
+    }
+    renderUpdateStatus({ state: "idle" });
+  });
+
+  /* ==========================================================================
+     Unsaved words. The capture card and the open editor keep a copy in the data
+     folder as they change, so a restart (an update's, for example) cannot lose
+     them. The copy is removed after a save or a discard. While words are unsaved
+     the window reports it, and an update waits before it restarts Dreamy.
+     ========================================================================== */
+  // Nothing is known to be stored yet (undefined, not null, which means "no draft"), so
+  // the first sync after startup always brings the stored copies in step with the screen
+  const lastDraft = { capture: undefined, editor: undefined, busy: undefined };
+  let draftsReady = false; // nothing is written until the saved copies have been read
+  let draftQueue = Promise.resolve(); // writes run one at a time, so the newest always lands last
+
+  function reportDraftError(kind) {
+    const show = kind === "capture" ? setStatus : setEditStatus;
+    return (err) => show("Could not keep a copy of your unsaved words: " + err, "error");
+  }
+
+  function queueDraft(cmd, args, kind) {
+    draftQueue = draftQueue.then(() => invoke(cmd, args)).catch(reportDraftError(kind));
+  }
+
+  // The capture card's words, or null when the card holds no words, tags or lucidity.
+  // The date alone is not unsaved words, so changing it never keeps a draft (or an update) waiting.
+  function captureDraft() {
+    const untouched = !dreamEl.value && !tagInput.value && !state.selected.length && state.level === 0;
+    if (untouched) return null;
+    return JSON.stringify({
+      text: dreamEl.value,
+      date: dreamTime.value,
+      lucidity: state.level,
+      tags: [...state.selected],
+      pendingTag: tagInput.value,
+    });
+  }
+
+  // The open editor's changes, or null when nothing is unsaved
+  function editorDraft() {
+    if (!editing || editSnapshot() === editing.original) return null;
+    return JSON.stringify({
+      name: editing.name,
+      time: editTime.value,
+      level: editing.level,
+      tags: [...editing.tags],
+      pendingTag: editTagInput.value,
+      text: editText.value,
+    });
+  }
+
+  // Brings the stored copies in step with the screen. Runs after every change.
+  // Only what changed is written.
+  function syncDrafts() {
+    if (!window.__TAURI__ || !draftsReady) return;
+    const capture = captureDraft();
+    if (capture !== lastDraft.capture) {
+      lastDraft.capture = capture;
+      if (capture === null) queueDraft("clear_draft", { kind: "capture" }, "capture");
+      else queueDraft("save_draft", { kind: "capture", content: capture }, "capture");
+    }
+    const editor = editorDraft();
+    if (editor !== lastDraft.editor) {
+      lastDraft.editor = editor;
+      if (editor === null) queueDraft("clear_draft", { kind: "editor" }, "editor");
+      else queueDraft("save_draft", { kind: "editor", content: editor }, "editor");
+    }
+    const busy = capture !== null || editor !== null;
+    if (busy !== lastDraft.busy) {
+      lastDraft.busy = busy;
+      queueDraft("set_unsaved_changes", { busy }, "capture");
+    }
+    requestInstallApproval(); // words may have just cleared, which can release a waiting update
+  }
+
+  // Every change on screen passes through one of these events, so the copies follow along
+  ["input", "change", "click", "keydown"].forEach((type) => document.addEventListener(type, syncDrafts));
+
+  function applyCaptureDraft(draft) {
+    dreamEl.value = typeof draft.text === "string" ? draft.text : "";
+    if (typeof draft.date === "string" && draft.date) dreamTime.value = draft.date;
+    setLevel(Number.isInteger(draft.lucidity) ? Math.min(LEVELS.length - 1, Math.max(0, draft.lucidity)) : 0);
+    state.selected = Array.isArray(draft.tags) ? draft.tags.filter((t) => typeof t === "string") : [];
+    tagInput.value = typeof draft.pendingTag === "string" ? draft.pendingTag : "";
+    renderPills();
+    renderLibrary();
+    setStatus("Restored your unsaved dream from before the restart.", "ok");
+  }
+
+  // Tells the owner where unsaved words went when they could not be restored. Nothing is deleted.
+  function reportRecovered(names) {
+    if (names.length === 0) return;
+    setStatus(
+      "Some unsaved words could not be restored, so Dreamy kept them safe in Documents\\Dreamy as " +
+        names.join(", ") + ". Nothing was deleted.",
+      "error"
+    );
+  }
+
+  // Moves a stored copy aside under a recovery name. The words stay on disk.
+  async function keepAside(kind) {
+    const name = await invoke("preserve_draft", { kind });
+    if (name) reportRecovered([name]);
+  }
+
+  // Reads one stored copy. A copy that is not valid JSON is kept aside, never dropped.
+  async function loadDraft(kind) {
+    const text = await invoke("load_draft", { kind });
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      await keepAside(kind);
+      return null;
+    }
+  }
+
+  // Runs once at startup, after the journal is read, so an editor draft can find its dream
+  async function restoreDrafts() {
+    if (!window.__TAURI__) return;
+    try {
+      const capture = await loadDraft("capture");
+      if (capture) applyCaptureDraft(capture);
+
+      const editor = await loadDraft("editor");
+      if (editor) {
+        if (state.journal.some((d) => d.name === editor.name)) {
+          openEditor(editor.name, null, editor);
+        } else {
+          // The dream was moved or deleted since, so its words are kept aside, not dropped
+          await keepAside("editor");
+        }
+      }
+
+      // Copies that Rust moved aside at startup. Shown last, so no other message replaces it.
+      reportRecovered(await invoke("take_draft_recovery"));
+    } catch (err) {
+      setStatus("Could not restore your unsaved words: " + err, "error");
+    } finally {
+      draftsReady = true;
+      syncDrafts();
+    }
+  }
+
+  /* ==========================================================================
+     Install approval. A downloaded update waits until the window holds no unsaved
+     words. Dreamy approves it only after every queued copy is written and both drafts
+     are empty. The capture card and the editor are then held shut, so no word can be
+     typed between that check and the installer starting. Rust checks the words once
+     more before it installs.
+     ========================================================================== */
+  let updateToken = null; // the verified update waiting for approval, or null
+  let approvalChecking = false; // a check is already running, so it is not started twice
+  let installHold = false; // true from approval until the installer takes over
+
+  // Holds the capture card and the editor shut while an install is being approved
+  function setInstallHold(on) {
+    installHold = on;
+    $(".card").inert = on;
+    editorEl.inert = on || !editing;
+  }
+
+  async function requestInstallApproval() {
+    if (updateToken === null || installHold || approvalChecking || !draftsReady) return;
+    approvalChecking = true;
+    try {
+      // Wait until no write is queued, including any queued while waiting
+      let settled;
+      do {
+        settled = draftQueue;
+        await settled;
+      } while (settled !== draftQueue);
+
+      // Nothing awaits from here to the hold, so no keystroke can land in between.
+      // A save still running would be cut off by the installer, so it goes first.
+      if (updateToken === null || saving || (editing && editing.saving)) return;
+      if (captureDraft() !== null || editorDraft() !== null) return; // words still here: keep waiting
+
+      const token = updateToken;
+      setInstallHold(true);
+      invoke("approve_update_install", { token }).catch(() => {
+        // Refused, or the install did not start: the update keeps waiting and typing resumes
+        setInstallHold(false);
+      });
+    } finally {
+      approvalChecking = false;
+    }
+  }
+
+  /* ==========================================================================
      Start
      ========================================================================== */
   async function init() {
@@ -1821,10 +2087,12 @@
     setLevel(0);
     setNow();
     renderPills();
+    watchUpdates();
 
     await loadLibrary();
     renderLibrary();
-    refreshRecent();
+    await refreshRecent();
+    await restoreDrafts();
 
     updateDawnSky();
     resizeSky();

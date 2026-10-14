@@ -11,6 +11,9 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
+mod drafts;
+mod updates;
+
 /// Dreamy's data folder: Documents\Dreamy
 fn dreamy_root() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
@@ -410,6 +413,10 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::UpdateState::default())
+        .manage(drafts::Unsaved::default())
+        .manage(drafts::Recovery::default())
         .invoke_handler(tauri::generate_handler![
             save_dream,
             list_dreams,
@@ -418,7 +425,16 @@ fn main() {
             update_dream,
             delete_dreams,
             load_tags,
-            save_tags
+            save_tags,
+            drafts::save_draft,
+            drafts::load_draft,
+            drafts::clear_draft,
+            drafts::set_unsaved_changes,
+            drafts::preserve_draft,
+            drafts::take_draft_recovery,
+            updates::get_update_status,
+            updates::dismiss_update_status,
+            updates::approve_update_install
         ])
         .setup(|app| {
             // Start with Windows (re-enabled on every launch so it stays on)
@@ -436,7 +452,7 @@ fn main() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit Dreamy", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(updates::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Dreamy")
                 .menu(&menu)
@@ -451,6 +467,14 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Words left from before a restart already hold an update, before the window has opened
+            if let Err(err) = drafts::restore_unsaved_state(&app.state::<drafts::Unsaved>(), &app.state::<drafts::Recovery>()) {
+                eprintln!("Could not read unsaved words: {err}");
+            }
+
+            // Look for a newer release in the background. Startup does not wait for it.
+            updates::check_in_background(app.handle().clone());
 
             Ok(())
         })

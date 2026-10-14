@@ -20,3 +20,13 @@ desktop.ini
 # Logs and local settings
 *.log
 .claude/settings.local.json
+
+# Updater signing keys and local secrets. These must never be committed.
+# The private key lives outside the project (see docs/releasing.md); these rules
+# are a safety net in case one is ever saved here by mistake.
+*.key
+*.key.pub
+*.pem
+.env
+.env.*
+.tauri/
