@@ -33,7 +33,8 @@ A dream journal that lives on the desktop, stores everything as plain local file
 - Dreams are saved as Markdown files in Documents\Dreamy\Dreams, with date, lucidity (0 to 4), and tags at the top.
 - Tags live in a library file (Documents\Dreamy\tags.json). Each tag has a name, a color, and a symbol.
 - Past dreams open in a reader. A Dreams sidebar (opened from the left edge) searches, sorts, and filters them by lucidity and tags.
-- Planned, not yet built: reality-check reminders from the tray, a wake-back-to-bed timer, a patterns view, and editing past dreams.
+- Past dreams can be edited, renamed by date and time, and deleted. Deleted dreams move to a Deleted folder, so nothing is lost for good. Holding a dream selects several at once.
+- Planned, not yet built: reality-check reminders from the tray, a wake-back-to-bed timer, and a patterns view.
 - Low resource use is a requirement: the tray process should stay small on RAM and CPU.
 
 ## Brand Commitments

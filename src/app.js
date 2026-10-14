@@ -24,6 +24,24 @@
           return preview.dreams[args.filename];
         }
         if (cmd === "load_tags") return preview.tags;
+        if (cmd === "update_dream") {
+          if (!(args.filename in preview.dreams)) throw new Error("This dream no longer exists");
+          if (args.filename.slice(0, 16) === args.dateStamp) { preview.dreams[args.filename] = args.content; return args.filename; }
+          let name = args.dateStamp + ".md";
+          for (let n = 2; name in preview.dreams; n++) name = args.dateStamp + "_" + n + ".md";
+          preview.dreams[name] = args.content;
+          delete preview.dreams[args.filename];
+          return name;
+        }
+        if (cmd === "delete_dreams") {
+          const moved = [];
+          const failed = [];
+          args.filenames.forEach((name) => {
+            if (name in preview.dreams) { delete preview.dreams[name]; moved.push(name); }
+            else failed.push(name);
+          });
+          return [moved, failed];
+        }
         if (cmd === "save_tags") { preview.tags = args.content; return null; }
         throw new Error("Unknown command: " + cmd);
       };
@@ -99,6 +117,8 @@
     journal: [],      // every saved dream, parsed: { name, lucidity, tags, body }
     filters: { query: "", sort: "newest", lucidity: "any", tags: [] }, // Dreams sidebar
     dreamsOpen: false, // Dreams panel expanded beside the rail
+    selecting: false,  // select mode: hold a dream, then tick others
+    picked: new Set(), // dream file names ticked in select mode
   };
 
   const RECENT_LIMIT = 10;
@@ -156,6 +176,16 @@
   const sideCount = $("#sideCount");
   const sideClear = $("#sideClear");
   const sideList = $("#sideList");
+  const sideNoteEl = $("#sideNote");
+  const journalHintEl = $("#journalHint");
+  const bulkEl = $("#bulk");
+  const bulkCount = $("#bulkCount");
+  const bulkAllBtn = $("#bulkAll");
+  const bulkDeleteBtn = $("#bulkDelete");
+  const bulkDoneBtn = $("#bulkDone");
+  const ctxEl = $("#ctx");
+  const editorEl = $("#editor");
+  const confirmEl = $("#confirm");
 
   /* ==========================================================================
      Small helpers
@@ -658,18 +688,30 @@
 
   saveBtn.addEventListener("click", saveDream);
 
+  // Escape closes the topmost layer first: confirm, menu, designer, editor, reader,
+  // settings, then select mode, then the sidebar
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key === "Enter") {
       event.preventDefault();
-      saveDream();
+      if (confirmEl.classList.contains("open")) return;
+      if (editorEl.classList.contains("open")) saveEditor();
+      else saveDream();
     } else if (event.key === "Escape") {
-      if (state.designer) {
+      if (confirmEl.classList.contains("open")) {
+        closeConfirm();
+      } else if (!ctxEl.hidden) {
+        closeMenu();
+      } else if (state.designer) {
         closeDesigner();
         tagInput.focus();
+      } else if (editorEl.classList.contains("open")) {
+        tryCloseEditor();
       } else if (readerEl.classList.contains("open")) {
         closeReader();
       } else if (drawer.classList.contains("open")) {
         closeSettings();
+      } else if (state.selecting) {
+        exitSelect();
       } else if (sidebarEl.classList.contains("open")) {
         hideSidebar();
       }
@@ -805,10 +847,15 @@
   let sideHover = false;   // the pointer is over the sidebar
   let sideHideTimer = 0;
 
+  // Any panel or menu on top of the sidebar keeps it open
+  function modalOpen() {
+    return drawer.classList.contains("open") || readerEl.classList.contains("open") || editorEl.classList.contains("open") || confirmEl.classList.contains("open") || !ctxEl.hidden;
+  }
+
   function showSidebar() {
     clearTimeout(sideHideTimer);
     if (sidebarEl.classList.contains("open")) return;
-    if (drawer.classList.contains("open") || readerEl.classList.contains("open")) return;
+    if (modalOpen()) return;
     sidebarEl.classList.add("open");
     sidebarEl.setAttribute("aria-hidden", "false");
   }
@@ -821,12 +868,12 @@
   }
 
   // Close shortly after the pointer leaves, unless the pointer came back,
-  // the user is typing in the sidebar, or a dream is open in the reader
+  // the user is typing in the sidebar, a dream is open, or dreams are being selected
   function scheduleSidebarHide() {
     clearTimeout(sideHideTimer);
     sideHideTimer = setTimeout(() => {
       const typing = sidebarEl.contains(document.activeElement) && document.activeElement.matches("input, select");
-      if (sideHover || typing || readerEl.classList.contains("open")) return;
+      if (sideHover || typing || state.selecting || modalOpen()) return;
       hideSidebar();
     }, 320);
   }
@@ -838,6 +885,7 @@
     tabDreams.setAttribute("aria-expanded", String(open));
     journalEl.inert = !open;
     if (open) renderSidebar();
+    else exitSelect();
   }
 
   // A dream's date spelled out in full, so "october" or "monday" can be searched
@@ -876,8 +924,25 @@
     renderSidebar();
   }
 
+  // Holding a dream down for half a second starts select mode with that dream ticked
+  const HOLD_MS = 480;
+  let holdTimer = 0;
+  let holdFired = false; // a hold just fired, so the click that follows is ignored
+
   function sideItem(dream, i) {
-    const item = el("button", { class: "side-item", type: "button", title: "Open this dream", style: "--n:" + Math.min(i, 12) });
+    const picked = state.picked.has(dream.name);
+    const item = el("button", {
+      class: "side-item",
+      type: "button",
+      title: state.selecting ? "Tick or untick this dream" : "Open this dream. Hold to select several, or right-click for more.",
+      style: "--n:" + Math.min(i, 12),
+    });
+    if (state.selecting) {
+      item.classList.add("selecting");
+      item.classList.toggle("picked", picked);
+      item.setAttribute("aria-pressed", String(picked));
+      item.append(el("span", { class: "pick", "aria-hidden": "true" }));
+    }
     item.append(
       el("span", { class: "side-head" }, [
         el("span", { class: "side-date", text: prettyName(dream.name) }),
@@ -887,7 +952,55 @@
     if (dream.tags.length) item.append(el("span", { class: "side-tags" }, dream.tags.map(tagChip)));
     const snippet = dream.body ? dream.body.replace(/\s+/g, " ") : "No words saved";
     item.append(el("span", { class: "side-snippet", text: snippet }));
-    item.addEventListener("click", () => openDream(dream.name, item));
+
+    item.addEventListener("click", () => {
+      if (holdFired) {
+        holdFired = false;
+        return;
+      }
+      if (state.selecting) togglePick(dream.name);
+      else openDream(dream.name, item);
+    });
+
+    item.addEventListener("pointerdown", (event) => {
+      holdFired = false;
+      clearTimeout(holdTimer);
+      if (event.button !== 0 || state.selecting) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const stop = () => {
+        clearTimeout(holdTimer);
+        item.classList.remove("holding");
+        item.removeEventListener("pointermove", drift);
+        item.removeEventListener("pointerup", stop);
+        item.removeEventListener("pointerleave", stop);
+      };
+      // Moving the pointer away cancels the hold, so ordinary drags still just scroll
+      const drift = (move) => {
+        if (Math.hypot(move.clientX - startX, move.clientY - startY) > 8) stop();
+      };
+      item.classList.add("holding");
+      item.addEventListener("pointermove", drift);
+      item.addEventListener("pointerup", stop);
+      item.addEventListener("pointerleave", stop);
+      holdTimer = setTimeout(() => {
+        stop();
+        holdFired = true;
+        enterSelect(dream.name);
+      }, HOLD_MS);
+    });
+
+    item.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openMenu(dream.name, event.clientX, event.clientY);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        event.preventDefault();
+        const box = item.getBoundingClientRect();
+        openMenu(dream.name, box.left + 24, box.top + 24);
+      }
+    });
     return item;
   }
 
@@ -942,10 +1055,20 @@
     if (!total) sideList.replaceChildren(el("div", { class: "empty", text: "Your saved dreams will appear here." }));
     else if (!list.length) sideList.replaceChildren(el("div", { class: "empty", text: "No dreams match these filters." }));
     else sideList.replaceChildren(...list.map(sideItem));
+
+    // Forget ticks on dreams that no longer exist, then show the bottom bar
+    const names = new Set(state.journal.map((dream) => dream.name));
+    state.picked.forEach((name) => {
+      if (!names.has(name)) state.picked.delete(name);
+    });
+    renderBulk();
   }
 
   tabDreams.addEventListener("click", () => setDreamsOpen(!state.dreamsOpen));
-  closeSidebarBtn.addEventListener("click", hideSidebar);
+  closeSidebarBtn.addEventListener("click", () => {
+    exitSelect();
+    hideSidebar();
+  });
 
   sideSearch.addEventListener("input", () => {
     state.filters.query = sideSearch.value;
@@ -975,6 +1098,359 @@
   sidebarEl.addEventListener("focusout", () => {
     if (!sideHover) scheduleSidebarHide();
   });
+
+  /* ==========================================================================
+     Select mode: hold a dream, tick others, then delete them together.
+     The bottom bar offers Select all, Delete and Done.
+     ========================================================================== */
+  function setSideNote(message, kind) {
+    sideNoteEl.textContent = message;
+    sideNoteEl.className = "side-note" + (kind ? " " + kind : "");
+  }
+
+  function enterSelect(name) {
+    state.selecting = true;
+    state.picked.add(name);
+    renderSidebar();
+  }
+
+  function exitSelect() {
+    if (!state.selecting) return;
+    state.selecting = false;
+    state.picked.clear();
+    renderSidebar();
+    if (!sideHover) scheduleSidebarHide();
+  }
+
+  function togglePick(name) {
+    if (state.picked.has(name)) state.picked.delete(name);
+    else state.picked.add(name);
+    renderSidebar();
+  }
+
+  function selectedNames() {
+    return state.journal.filter((dream) => state.picked.has(dream.name)).map((dream) => dream.name);
+  }
+
+  function renderBulk() {
+    bulkEl.hidden = !state.selecting;
+    journalHintEl.hidden = state.selecting;
+    const n = state.picked.size;
+    bulkCount.textContent = n === 0 ? "Tick the dreams to delete" : n + (n === 1 ? " dream ticked" : " dreams ticked");
+    bulkDeleteBtn.disabled = n === 0;
+    bulkAllBtn.disabled = matchingDreams().length === 0;
+  }
+
+  bulkAllBtn.addEventListener("click", () => {
+    matchingDreams().forEach((dream) => state.picked.add(dream.name));
+    renderSidebar();
+  });
+  bulkDeleteBtn.addEventListener("click", () => confirmDelete(selectedNames()));
+  bulkDoneBtn.addEventListener("click", () => exitSelect());
+
+  /* ==========================================================================
+     Right-click menu on a dream: Open, Edit, Rename, Select, Delete
+     ========================================================================== */
+  function closeMenu() {
+    ctxEl.hidden = true;
+    ctxEl.replaceChildren();
+  }
+
+  function menuButton(label, action, danger) {
+    const button = el("button", { class: "ctx-item" + (danger ? " danger" : ""), type: "button", role: "menuitem", text: label });
+    button.addEventListener("click", () => {
+      closeMenu();
+      action();
+    });
+    return button;
+  }
+
+  function openMenu(name, x, y) {
+    ctxEl.replaceChildren(
+      menuButton("Open", () => openDream(name, null)),
+      menuButton("Edit", () => openEditor(name, "text")),
+      menuButton("Rename", () => openEditor(name, "date")),
+      menuButton("Select", () => enterSelect(name)),
+      el("div", { class: "ctx-sep", role: "separator" }),
+      menuButton("Delete", () => confirmDelete([name]), true)
+    );
+    ctxEl.hidden = false;
+    // Keep the menu on screen even when it was opened near an edge
+    ctxEl.style.left = Math.max(8, Math.min(x, window.innerWidth - ctxEl.offsetWidth - 8)) + "px";
+    ctxEl.style.top = Math.max(8, Math.min(y, window.innerHeight - ctxEl.offsetHeight - 8)) + "px";
+    ctxEl.querySelector("button").focus();
+  }
+
+  ctxEl.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...ctxEl.querySelectorAll(".ctx-item")];
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const at = items.indexOf(document.activeElement);
+    items[(at + step + items.length) % items.length].focus();
+  });
+
+  // Clicking elsewhere, scrolling or resizing closes the menu
+  document.addEventListener("pointerdown", (event) => {
+    if (!ctxEl.hidden && !ctxEl.contains(event.target)) closeMenu();
+  });
+  window.addEventListener("scroll", closeMenu, true);
+  window.addEventListener("resize", closeMenu);
+
+  /* ==========================================================================
+     Delete: always asks first. Dreams move to Documents\Dreamy\Deleted.
+     ========================================================================== */
+  const confirmTitle = $("#confirmTitle");
+  const confirmText = $("#confirmText");
+  const confirmYes = $("#confirmYes");
+  const confirmCancelBtn = $("#confirmCancel");
+  let pendingDelete = [];
+
+  function confirmDelete(names) {
+    if (!names.length) return;
+    pendingDelete = names;
+    const many = names.length > 1;
+    confirmTitle.textContent = many ? "Delete " + names.length + " dreams?" : "Delete this dream?";
+    confirmText.textContent =
+      (many ? "" : prettyName(names[0]) + ". ") + "They move to Documents\\Dreamy\\Deleted, so you can get them back from there.";
+    confirmYes.textContent = many ? "Delete " + names.length : "Delete dream";
+    confirmEl.inert = false;
+    confirmEl.classList.add("open");
+    confirmEl.setAttribute("aria-hidden", "false");
+    setTimeout(() => confirmCancelBtn.focus(), 50);
+  }
+
+  function closeConfirm() {
+    pendingDelete = [];
+    confirmEl.classList.remove("open");
+    confirmEl.setAttribute("aria-hidden", "true");
+    confirmEl.inert = true;
+    if (!sideHover) scheduleSidebarHide();
+  }
+
+  async function deleteConfirmed() {
+    const names = pendingDelete;
+    closeConfirm();
+    if (!names.length) return;
+    try {
+      const [moved, failed] = await invoke("delete_dreams", { filenames: names });
+      moved.forEach((name) => state.picked.delete(name));
+      const parts = [];
+      if (moved.length) parts.push("Moved " + moved.length + " to Deleted.");
+      if (failed.length) parts.push("Could not delete " + failed.length + ". They are still in your Dreams folder.");
+      setSideNote(parts.join(" "), failed.length ? "error" : "ok");
+    } catch (err) {
+      setSideNote("Could not delete: " + err, "error");
+    }
+    await refreshRecent();
+  }
+
+  $("#confirmYes").addEventListener("click", deleteConfirmed);
+  confirmCancelBtn.addEventListener("click", closeConfirm);
+  $("#confirmScrim").addEventListener("click", closeConfirm);
+
+  /* ==========================================================================
+     Editor: change a saved dream's date (rename), lucidity, tags and words
+     ========================================================================== */
+  const editorTitle = $("#editorTitle");
+  const editTime = $("#editTime");
+  const editLevelsEl = $("#editLevels");
+  const editTagfield = $("#editTagfield");
+  const editTagInput = $("#editTagInput");
+  const editLibraryEl = $("#editLibrary");
+  const editText = $("#editText");
+  const editStatus = $("#editStatus");
+  const editSave = $("#editSave");
+  let editing = null; // the dream being edited: { name, level, tags, original, saving }
+
+  function setEditStatus(message, kind) {
+    editStatus.textContent = message;
+    editStatus.className = "status" + (kind ? " " + kind : "");
+  }
+
+  // Everything the editor shows, as text, to tell whether anything changed
+  function editSnapshot() {
+    return JSON.stringify({ time: editTime.value, level: editing.level, tags: editing.tags, text: editText.value });
+  }
+
+  function syncEditLevels() {
+    [...editLevelsEl.children].forEach((seg, i) => seg.setAttribute("aria-checked", String(i === editing.level)));
+  }
+
+  function buildEditLevels() {
+    editLevelsEl.replaceChildren(
+      ...LEVELS.map((label, i) => {
+        const seg = el("button", { class: "seg", type: "button", role: "radio", "aria-checked": "false", title: i + " · " + label, text: String(i) });
+        seg.addEventListener("click", () => {
+          editing.level = i;
+          syncEditLevels();
+        });
+        return seg;
+      })
+    );
+    syncEditLevels();
+  }
+
+  // Adds a tag to the dream being edited, creating it in the library if it is new
+  function addEditTag(raw) {
+    const name = raw.replace(/,/g, "").trim().slice(0, 24);
+    if (!name || editing.tags.some((n) => norm(n) === norm(name))) return;
+    let tag = findTag(name);
+    if (!tag) {
+      tag = { name, color: nextColor(), symbol: null };
+      state.library.push(tag);
+      persistLibrary();
+    }
+    editing.tags.push(tag.name);
+  }
+
+  function renderEditTags() {
+    editTagfield.querySelectorAll(".pill").forEach((node) => node.remove());
+    editing.tags.forEach((name) => {
+      const tag = findTag(name) || { name, color: COLORS[0], symbol: null };
+      const pill = el("span", { class: "pill" });
+      pill.style.setProperty("--tag", tag.color);
+      const remove = el("button", { class: "remove", type: "button", "aria-label": "Remove " + name, text: "×" });
+      remove.addEventListener("click", () => {
+        editing.tags = editing.tags.filter((n) => norm(n) !== norm(name));
+        renderEditTags();
+      });
+      pill.append(tagMark(tag), el("span", { text: name }), remove);
+      editTagfield.insertBefore(pill, editTagInput);
+    });
+    renderEditLibrary();
+  }
+
+  function renderEditLibrary() {
+    const query = norm(editTagInput.value);
+    const chips = state.library
+      .filter((tag) => !editing.tags.some((n) => norm(n) === norm(tag.name)) && (!query || norm(tag.name).includes(query)))
+      .map((tag) => {
+        const chip = el("button", { class: "chip", type: "button", title: "Add " + tag.name });
+        chip.style.setProperty("--tag", tag.color);
+        chip.append(tagMark(tag, "glyph"), el("span", { text: tag.name }));
+        chip.addEventListener("click", () => {
+          addEditTag(tag.name);
+          renderEditTags();
+          editTagInput.focus();
+        });
+        return chip;
+      });
+    if (query && !findTag(query)) {
+      chips.push(el("span", { class: "chip-empty", text: "Press Enter to create “" + editTagInput.value.trim() + "”" }));
+    }
+    if (!chips.length) {
+      chips.push(el("span", { class: "chip-empty", text: state.library.length ? "All your tags are on this dream" : "Your tags will gather here" }));
+    }
+    editLibraryEl.replaceChildren(...chips);
+  }
+
+  editTagInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === ",") {
+      event.preventDefault();
+      addEditTag(editTagInput.value);
+      editTagInput.value = "";
+      renderEditTags();
+    } else if (event.key === "Backspace" && editTagInput.value === "" && editing.tags.length) {
+      editing.tags.pop();
+      renderEditTags();
+    }
+  });
+  editTagInput.addEventListener("input", renderEditLibrary);
+  // Keep focus in the tag field when a library chip is pressed
+  editLibraryEl.addEventListener("mousedown", (event) => event.preventDefault());
+  editTagfield.addEventListener("click", (event) => {
+    if (event.target === editTagfield) editTagInput.focus();
+  });
+
+  function openEditor(name, focus) {
+    const dream = state.journal.find((d) => d.name === name);
+    if (!dream) {
+      setSideNote("That dream could not be found.", "error");
+      return;
+    }
+    editing = { name, level: dream.lucidity, tags: [...dream.tags], original: "", saving: false };
+    editorTitle.textContent = focus === "date" ? "Rename by date and time" : "Edit dream";
+    // The file name is the date, so "2026-10-13_07-12..." becomes "2026-10-13T07:12"
+    editTime.value = name.slice(0, 10) + "T" + name.slice(11, 16).replace("-", ":");
+    editText.value = dream.body;
+    editTagInput.value = "";
+    buildEditLevels();
+    renderEditTags();
+    setEditStatus("");
+    editing.original = editSnapshot();
+    editorEl.inert = false;
+    editorEl.classList.add("open");
+    editorEl.setAttribute("aria-hidden", "false");
+    setTimeout(() => (focus === "date" ? editTime : editText).focus(), 50);
+  }
+
+  function closeEditor() {
+    editing = null;
+    editorEl.classList.remove("open");
+    editorEl.setAttribute("aria-hidden", "true");
+    editorEl.inert = true;
+    if (!sideHover) scheduleSidebarHide();
+  }
+
+  // The × and Escape keep unsaved words: those need Save or Cancel
+  function tryCloseEditor() {
+    if (editing && editSnapshot() !== editing.original) {
+      setEditStatus("You have unsaved changes. Save them, or press Cancel to drop them.", "error");
+      return;
+    }
+    closeEditor();
+  }
+
+  async function saveEditor() {
+    if (!editing || editing.saving) return;
+    // A tag typed but not yet entered is added, as it is for a new dream
+    if (editTagInput.value.trim()) {
+      addEditTag(editTagInput.value);
+      editTagInput.value = "";
+      renderEditTags();
+    }
+    if (!editTime.value) {
+      setEditStatus("Pick a date and time for this dream first.", "error");
+      editTime.focus();
+      return;
+    }
+
+    const header = [
+      "---",
+      "date: " + editTime.value.replace("T", " "),
+      "lucidity: " + editing.level,
+      "tags: [" + editing.tags.join(", ") + "]",
+      "---",
+      "",
+    ].join("\n");
+
+    const { name } = editing;
+    editing.saving = true;
+    editSave.disabled = true;
+    try {
+      const saved = await invoke("update_dream", {
+        filename: name,
+        dateStamp: fileStamp(editTime.value),
+        content: header + editText.value.trim() + "\n",
+      });
+      // Keep the dream ticked if it was ticked before it moved to a new date
+      if (state.picked.delete(name)) state.picked.add(saved);
+      closeEditor();
+      setSideNote("Saved " + prettyName(saved) + ".", "ok");
+      await refreshRecent();
+    } catch (err) {
+      setEditStatus("Could not save: " + err, "error");
+    } finally {
+      if (editing) editing.saving = false;
+      editSave.disabled = false;
+    }
+  }
+
+  $("#editSave").addEventListener("click", saveEditor);
+  $("#editCancel").addEventListener("click", closeEditor);
+  $("#closeEditor").addEventListener("click", tryCloseEditor);
+  $("#editorScrim").addEventListener("click", tryCloseEditor);
 
   /* ==========================================================================
      Feedback effects: button ripple and the star burst on save

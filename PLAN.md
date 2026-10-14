@@ -39,7 +39,8 @@ A personal Windows desktop app for journaling dreams and lucid dreams. Built for
 - [ ] Reality-check reminders (interval notifications from the tray)
 - [ ] Wake-back-to-bed timer
 - [ ] Patterns view (frequency, lucidity over time, tag correlations)
-- [ ] Edit past entries (search is done in the Dreams sidebar)
+- [x] Edit past entries: right-click a dream in the Dreams sidebar and choose Edit (words, lucidity, tags, date and time) or Rename (changes the date and time, which is also the file name). Saves replace the file in place, or move it to a new name without replacing another dream.
+- [x] Select and delete dreams: hold a dream for half a second to select several, then use Select all, Delete or Done in the bar at the bottom of the sidebar. Right-click offers Open, Edit, Rename, Select and Delete. Delete always asks first, and the dreams move to `Documents\Dreamy\Deleted` rather than being destroyed. Rust tests cover this in scratch folders. Checked in a browser preview with stand-in storage, not yet in the desktop window.
 
 ## Running it
 

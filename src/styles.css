@@ -27,6 +27,7 @@
   --accent-ink: #0d0b22;
   --glow: rgba(168, 151, 255, 0.35);
   --aura: rgba(168, 151, 255, 0.11);
+  --danger: #ff9db3;
 
   --radius: 22px;
   --radius-sm: 13px;
@@ -59,6 +60,7 @@
   --accent-ink: #2a1322;
   --glow: rgba(255, 160, 120, 0.34);
   --aura: rgba(255, 170, 130, 0.12);
+  --danger: #ffa3a8;
 
   --radius: 28px;
   --radius-sm: 18px;
@@ -89,6 +91,7 @@
   --accent-ink: #00221d;
   --glow: rgba(94, 242, 214, 0.28);
   --aura: rgba(94, 242, 214, 0.08);
+  --danger: #ff8fa8;
 
   --radius: 12px;
   --radius-sm: 7px;
@@ -103,6 +106,9 @@
 * { box-sizing: border-box; }
 
 html, body { margin: 0; padding: 0; }
+
+/* The hidden attribute must win over any display rule below */
+[hidden] { display: none !important; }
 
 body {
   min-height: 100vh;
@@ -631,7 +637,7 @@ kbd {
   transition: color 0.3s;
 }
 .status.ok { color: #a3f0c4; }
-.status.error { color: #ff9db3; }
+.status.error { color: var(--danger); }
 
 .btn {
   position: relative;
@@ -828,8 +834,16 @@ kbd {
 .journal-inner {
   width: var(--journal-w);
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   padding: 26px 20px 22px;
+}
+/* Everything above the bottom bar scrolls; the bar itself stays put */
+.journal-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 .journal-head {
   display: flex;
@@ -918,6 +932,8 @@ kbd {
   align-content: start;
 }
 .side-item {
+  position: relative;
+  user-select: none;
   width: 100%;
   display: grid;
   gap: 8px;
@@ -933,6 +949,76 @@ kbd {
 }
 .side-item:hover { border-color: var(--border-2); background: var(--surface-2); transform: translateX(3px); }
 .side-item:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--glow); }
+/* Held down: the card lifts a little until the hold selects it */
+.side-item.holding { border-color: var(--accent); box-shadow: 0 0 0 4px var(--glow); transform: scale(0.985); }
+/* Select mode: a tick box on the left, and picked cards are filled */
+.side-item.selecting { padding-left: 44px; }
+.side-item.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.side-item .pick {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  background: var(--field);
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.3s;
+}
+.side-item.picked .pick {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--glow);
+}
+.side-item.picked .pick::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--accent-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.journal-hint {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--faint);
+  line-height: 1.5;
+}
+.side-note {
+  min-height: 18px;
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.side-note.ok { color: var(--accent-2); }
+.side-note.error { color: var(--danger); }
+/* Bottom bar: shown only in select mode */
+.bulk {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-2);
+}
+/* The count sits on its own line; the three buttons sit on one line under it */
+.bulk-count { flex: 1 0 100%; font-size: 13px; color: var(--muted); }
+.bulk-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; }
+.bulk .more, .bulk .btn { margin: 0; white-space: nowrap; }
+.bulk .btn { width: auto; padding: 10px 16px; }
+.btn.danger {
+  background: var(--danger);
+  box-shadow: 0 10px 26px -8px var(--danger);
+}
+.btn.danger:hover { box-shadow: 0 14px 30px -8px var(--danger); }
+.btn.danger:disabled { opacity: 0.4; cursor: default; transform: none; box-shadow: none; }
+.btn:disabled { cursor: default; }
 .side-head {
   display: flex;
   align-items: baseline;
@@ -957,6 +1043,76 @@ kbd {
   line-height: 1.5;
   color: var(--muted);
 }
+
+/* ---------- Right-click menu on a dream ---------- */
+.ctx {
+  position: fixed;
+  z-index: 80;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transform-origin: top left;
+  animation: pop 0.25s var(--spring) both;
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-item:hover, .ctx-item:focus-visible { background: var(--surface-2); outline: none; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-sep { height: 1px; margin: 5px 6px; background: var(--border); }
+
+/* ---------- Confirm dialog (delete) ---------- */
+.dialog { width: min(420px, 100%); max-height: none; }
+.dialog p {
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+/* ---------- Editor: change a saved dream ---------- */
+.editor-sheet { width: min(680px, 100%); }
+.editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 18px;
+  padding-right: 6px;
+}
+.editor-levels { grid-template-columns: repeat(5, 1fr); }
+.dream.edit-text { min-height: 200px; }
+.editor-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.editor-foot .status { margin-right: auto; }
 
 /* ---------- Reader: one saved dream ---------- */
 .reader {
