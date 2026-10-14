@@ -639,6 +639,50 @@ kbd {
 .status.ok { color: #a3f0c4; }
 .status.error { color: var(--danger); }
 
+/* Update line: a small note at the bottom, only while updating or after a failure */
+.update-note {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100vw - 32px);
+  padding: 7px 10px 7px 12px;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  box-shadow: 0 8px 24px -12px var(--glow);
+}
+.update-note[hidden],
+.update-dismiss[hidden] { display: none; }
+.update-note.failed { color: var(--danger); }
+.update-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--glow);
+  flex: none;
+}
+.update-note.working .update-dot { animation: pulse 1.4s var(--ease) infinite; }
+.update-note.failed .update-dot { background: var(--danger); box-shadow: none; }
+.update-dismiss {
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.update-dismiss:hover { opacity: 1; }
+
 .btn {
   position: relative;
   overflow: hidden;

@@ -1801,6 +1801,53 @@
   setInterval(updateDawnSky, 60 * 1000);
 
   /* ==========================================================================
+     Updates. The check and install run in the Rust backend, at startup. This only
+     shows the small line: "Updating Dreamy…" while it works, and a calm note if
+     it could not finish. The journal works the same either way.
+     ========================================================================== */
+  const updateNote = document.getElementById("updateNote");
+  const updateText = document.getElementById("updateText");
+  const updateDismiss = document.getElementById("updateDismiss");
+
+  function renderUpdateStatus(status) {
+    const state = status && status.state;
+    const failed = state === "failed";
+    const working = state === "downloading" || state === "installing";
+    updateNote.hidden = !(failed || working);
+    updateNote.classList.toggle("failed", failed);
+    updateNote.classList.toggle("working", working);
+    updateDismiss.hidden = !failed;
+    if (state === "downloading") {
+      const percent = typeof status.percent === "number" ? " " + status.percent + "%" : "";
+      updateText.textContent = "Updating Dreamy…" + percent;
+    } else if (state === "installing") {
+      updateText.textContent = "Updating Dreamy… restarting";
+    } else if (failed) {
+      updateText.textContent = status.message;
+    }
+  }
+
+  async function watchUpdates() {
+    // Plain browser preview: there is no backend, so there is nothing to show
+    if (!window.__TAURI__) return;
+    try {
+      renderUpdateStatus(await invoke("get_update_status"));
+      await window.__TAURI__.event.listen("update-status", (event) => renderUpdateStatus(event.payload));
+    } catch (err) {
+      // Updates are a bonus: if they cannot be watched, the journal carries on
+    }
+  }
+
+  updateDismiss.addEventListener("click", async () => {
+    try {
+      await invoke("dismiss_update_status");
+    } catch (err) {
+      // Hiding the note below is enough for this session
+    }
+    renderUpdateStatus({ state: "idle" });
+  });
+
+  /* ==========================================================================
      Start
      ========================================================================== */
   async function init() {

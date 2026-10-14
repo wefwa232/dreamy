@@ -1,0 +1,93 @@
+# Publishes a Dreamy release when a version tag such as v0.1.1 is pushed.
+# It builds the Windows installer, signs the updater package, and publishes the
+# GitHub Release together with latest.json. Installed copies of Dreamy read
+# latest.json to find updates. See docs/releasing.md for the full procedure.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+# One release at a time. A release already running is never cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the tagged code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Check the tag matches the app's version everywhere
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$conf" ] || [ "$tag" != "$cargo" ]; then
+            echo "The tag $GITHUB_REF_NAME does not match the versions in the project. Fix them, then tag again."
+            exit 1
+          fi
+
+      - name: Refuse a version that is not newer than the latest stable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new="${GITHUB_REF_NAME#v}"
+          # "gh release view" with no tag shows the latest stable release (never a draft or pre-release)
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          latest="${latest#v}"
+          if [ -n "$latest" ]; then
+            highest=$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -n1)
+            echo "latest stable=$latest new=$new"
+            if [ "$new" = "$latest" ] || [ "$highest" != "$new" ]; then
+              echo "Version $new is not newer than the latest stable release $latest. Installed copies would not update to it."
+              exit 1
+            fi
+          fi
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache the Rust build
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build, sign and publish the release
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Dreamy ${{ github.ref_name }}"
+          releaseBody: "Installed copies of Dreamy update to this version automatically. Your dreams and tag library are not changed by an update."
+          releaseDraft: false
+          # A tag with a dash (for example v0.2.0-beta.1) is a pre-release, and installed copies never update to it
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --config src-tauri/tauri.release.conf.json

@@ -1,12 +1,13 @@
 {
   "name": "dreamy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Personal dream and lucid dream journal",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "bump": "node scripts/bump-version.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

@@ -11,6 +11,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
+mod updates;
+
 /// Dreamy's data folder: Documents\Dreamy
 fn dreamy_root() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
@@ -410,6 +412,8 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             save_dream,
             list_dreams,
@@ -418,7 +422,9 @@ fn main() {
             update_dream,
             delete_dreams,
             load_tags,
-            save_tags
+            save_tags,
+            updates::get_update_status,
+            updates::dismiss_update_status
         ])
         .setup(|app| {
             // Start with Windows (re-enabled on every launch so it stays on)
@@ -436,7 +442,7 @@ fn main() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit Dreamy", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(updates::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Dreamy")
                 .menu(&menu)
@@ -451,6 +457,9 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Look for a newer release in the background. Startup does not wait for it.
+            updates::check_in_background(app.handle().clone());
 
             Ok(())
         })
