@@ -35,7 +35,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_UPDATER_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY5NTA3QjNCRTFBNEM3QUUKUldTdXg2VGhPM3RRK2ZhTXl0RzlQdEJqQUZTZENSSU9nR0lOSXczZVVmNXoyR25MZ1RrTkVyVDMK",
       "endpoints": [
         "https://github.com/wefwa232/dreamy/releases/latest/download/latest.json"
       ],
