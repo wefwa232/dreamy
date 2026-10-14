@@ -10,6 +10,7 @@ Dreamy is built for one person's private use. It lives in the system tray, start
 - **Tags with style.** Tags have a name, a colour, and a symbol. Your tag library is saved separately, so tags can be reused.
 - **Three visual worlds.** Deep night sky, dawn fading (follows the time of day), and a lucid instrument look. Ambient motion can be switched off in settings.
 - **Read past dreams.** Click a recent dream to read it, or open the **Dreams** sidebar.
+- **Edit and delete past dreams.** In the Dreams sidebar, right-click a dream to edit it, rename it by date and time, or delete it. Hold a dream to select several and delete them together.
 - **The Dreams sidebar.** Move the mouse to the left edge of the window and it slides out. Search by words, tags, or dates, sort by date or lucidity, and filter by lucidity level or tags.
 - **Voice input** comes from your own dictation tool, Handy (`Ctrl + Space`). Dreamy has no speech system of its own.
 - **Closing the window** hides Dreamy to the system tray. Quit it from the tray menu.
@@ -53,7 +54,7 @@ PRODUCT.md      product notes
 
 ## Status
 
-The foundation, visual worlds, tag system, reading past dreams, and the Dreams sidebar are built. Still to come: reality-check reminders, a wake-back-to-bed timer, a patterns view, and editing past dreams. See [PLAN.md](PLAN.md).
+The foundation, visual worlds, tag system, reading past dreams, the Dreams sidebar, and editing and deleting past dreams are built. Editing covers the words, lucidity, tags, and date. Deleting moves dreams to `Documents\Dreamy\Deleted`, so nothing is destroyed. Still to come: reality-check reminders, a wake-back-to-bed timer, and a patterns view. See [PLAN.md](PLAN.md).
 
 ---
 

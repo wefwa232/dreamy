@@ -122,31 +122,45 @@
 
     <section class="journal" id="journal" aria-label="Dreams" inert>
       <div class="journal-inner">
-        <div class="journal-head">
-          <h2>Dreams</h2>
-          <span class="count" id="sideCount"></span>
-          <button class="close" id="closeSidebar" type="button" aria-label="Close sidebar">×</button>
+        <div class="journal-scroll">
+          <div class="journal-head">
+            <h2>Dreams</h2>
+            <span class="count" id="sideCount"></span>
+            <button class="close" id="closeSidebar" type="button" aria-label="Close sidebar">×</button>
+          </div>
+
+          <input class="journal-search" id="sideSearch" type="search" placeholder="Search words, tags or dates" autocomplete="off" />
+
+          <div class="journal-tools">
+            <select class="journal-sort" id="sideSort" aria-label="Sort dreams">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="lucid">Most lucid first</option>
+              <option value="calm">Least lucid first</option>
+            </select>
+            <button class="more" id="sideClear" type="button" hidden>Clear filters</button>
+          </div>
+
+          <span class="label journal-label" id="levelLabel">Lucidity</span>
+          <div class="level-seg" id="sideLucid" role="radiogroup" aria-labelledby="levelLabel"></div>
+
+          <span class="label journal-label" id="sideTagLabel">Tags · dreams must have all picked</span>
+          <div class="side-tag-filter" id="sideTags" aria-labelledby="sideTagLabel"></div>
+
+          <p class="journal-hint" id="journalHint">Hold a dream to select several. Right-click for more.</p>
+          <div class="side-list" id="sideList"></div>
         </div>
 
-        <input class="journal-search" id="sideSearch" type="search" placeholder="Search words, tags or dates" autocomplete="off" />
+        <p class="side-note" id="sideNote" role="status"></p>
 
-        <div class="journal-tools">
-          <select class="journal-sort" id="sideSort" aria-label="Sort dreams">
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="lucid">Most lucid first</option>
-            <option value="calm">Least lucid first</option>
-          </select>
-          <button class="more" id="sideClear" type="button" hidden>Clear filters</button>
+        <div class="bulk" id="bulk" hidden>
+          <span class="bulk-count" id="bulkCount"></span>
+          <div class="bulk-actions">
+            <button class="more" id="bulkAll" type="button">Select all</button>
+            <button class="btn danger" id="bulkDelete" type="button">Delete</button>
+            <button class="more" id="bulkDone" type="button">Done</button>
+          </div>
         </div>
-
-        <span class="label journal-label" id="levelLabel">Lucidity</span>
-        <div class="level-seg" id="sideLucid" role="radiogroup" aria-labelledby="levelLabel"></div>
-
-        <span class="label journal-label" id="sideTagLabel">Tags · dreams must have all picked</span>
-        <div class="side-tag-filter" id="sideTags" aria-labelledby="sideTagLabel"></div>
-
-        <div class="side-list" id="sideList"></div>
       </div>
     </section>
   </aside>
@@ -167,6 +181,64 @@
       <p class="reader-file" id="readerFile"></p>
     </article>
   </aside>
+
+  <aside class="reader editor" id="editor" aria-hidden="true" inert>
+    <div class="reader-scrim" id="editorScrim"></div>
+    <div class="sheet editor-sheet" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+      <div class="sheet-head">
+        <h2 id="editorTitle">Edit dream</h2>
+        <button class="close" id="closeEditor" type="button" aria-label="Close without saving">×</button>
+      </div>
+
+      <div class="editor-body">
+        <div class="row">
+          <div>
+            <label class="label" for="editTime">Woke up at</label>
+            <input id="editTime" type="datetime-local" />
+          </div>
+          <div>
+            <span class="label" id="editLevelLabel">Lucidity</span>
+            <div class="level-seg editor-levels" id="editLevels" role="radiogroup" aria-labelledby="editLevelLabel"></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <span class="label" id="editTagLabel">Tags</span>
+          <div class="tagfield" id="editTagfield">
+            <input id="editTagInput" type="text" placeholder="Type a tag and press Enter" aria-labelledby="editTagLabel" autocomplete="off" />
+          </div>
+          <div class="library open" id="editLibrary"></div>
+        </div>
+
+        <div class="section">
+          <label class="label" for="editText">The dream</label>
+          <textarea id="editText" class="dream edit-text"></textarea>
+        </div>
+      </div>
+
+      <div class="editor-foot">
+        <span class="status" id="editStatus" role="status"></span>
+        <button class="btn ghost" id="editCancel" type="button">Cancel</button>
+        <button class="btn" id="editSave" type="button">Save changes</button>
+      </div>
+    </div>
+  </aside>
+
+  <aside class="reader confirm" id="confirm" aria-hidden="true" inert>
+    <div class="reader-scrim" id="confirmScrim"></div>
+    <article class="sheet dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+      <div class="sheet-head">
+        <h2 id="confirmTitle"></h2>
+      </div>
+      <p id="confirmText"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" id="confirmCancel" type="button">Cancel</button>
+        <button class="btn danger" id="confirmYes" type="button">Delete</button>
+      </div>
+    </article>
+  </aside>
+
+  <div class="ctx" id="ctx" role="menu" aria-label="Dream options" hidden></div>
 
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="scrim" id="scrim"></div>
